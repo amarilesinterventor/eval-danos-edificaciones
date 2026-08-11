@@ -1,5 +1,8 @@
 # Herramienta de Evaluación Rápida de Daños en Edificaciones
 
+🔗 **En producción**: https://eval-danos-edificaciones.onrender.com (nivel gratis de Render — el primer
+acceso tras un rato de inactividad puede tardar ~30-60s en despertar el servicio).
+
 Aplicación web para la inspección rápida de edificaciones tras eventos que puedan generar daños
 estructurales o no estructurales (sismos, inundaciones, movimientos en masa, incendios, vendavales,
 etc.), implementada digitalmente a partir del **Formulario Regional para Evaluación Rápida de Daños en
@@ -10,9 +13,9 @@ levantamiento desde un celular, tablet o computador con navegador: identificaci�
 víctimas y afectación humana, ubicación GPS, sistema estructural, checklist de daños por elemento con
 semáforo de severidad y guía visual de patologías, fotografías, clasificación de habitabilidad,
 recomendaciones y generación automática de informes en PDF — el rediseñado (con portada, foto de la
-edificación y créditos institucionales) y, si el organismo de atención de desastres lo exige, una réplica
-exacta del formulario oficial diligenciada — funcionando incluso sin conexión a internet en campo (PWA con
-cola de sincronización).
+edificación y créditos institucionales) y, si el organismo de atención de desastres lo exige, el propio
+formulario oficial diligenciado con los datos de la inspección — funcionando incluso sin conexión a
+internet en campo (PWA con cola de sincronización).
 
 ## Documentación
 

@@ -7,6 +7,10 @@ Abre la URL de la aplicación en el navegador de tu celular, tablet o computador
 primer paso de cada inspección (y la app lo recuerda para la siguiente, para no volver a escribirlo). Si
 vas a instalar la app en la pantalla de inicio (recomendado para campo), ver la sección 8.
 
+**Para compartirla con otro inspector**: en el Panel encontrarás una tarjeta "Comparte esta herramienta
+con otros inspectores" con un código QR — que puede escanear con la cámara de su celular para abrir la app
+al instante — y el enlace en texto con un botón para copiarlo.
+
 ## 2. Panel
 
 Al ingresar verás el **Panel**, con:
@@ -66,10 +70,10 @@ directamente a cualquier paso ya visitado tocando su número.
    informe en PDF (puedes descargar los dos, no es necesario elegir uno solo):
    - **📄 Generar informe PDF**: el informe rediseñado de esta herramienta, con foto de portada, semáforo
      de clasificación y créditos institucionales — el más fácil de leer y compartir.
-   - **📋 Generar formato oficial (PDF)**: réplica exacta del formulario impreso oficial ("2A - Formulario
-     regional homogenizado"), diligenciada con los datos de la inspección en sus mismas 16 secciones y
-     casillas. Úsalo cuando el organismo de atención de desastres exija recibir la información en su propio
-     formato oficial.
+   - **📋 Generar formato oficial (PDF)**: el propio formulario impreso oficial ("2A - Formulario regional
+     homogenizado"), diligenciado con los datos de la inspección en sus mismas 16 secciones y casillas.
+     Úsalo cuando el organismo de atención de desastres exija recibir la información en su propio formato
+     oficial.
    - **⬇ Exportar datos (CSV)**: descarga la información estructurada de la inspección.
    - **Finalizar →** (botón inferior): guarda todo, marca la inspección como finalizada y te lleva de
      vuelta al Panel. Puedes reabrirla después desde "Inspecciones" si necesitas corregir algo.

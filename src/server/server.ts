@@ -333,14 +333,14 @@ addRoute("GET", "/api/inspections/:id/report.pdf", (req, res, params) => {
 // homogenizado") — alternativa al informe rediseñado de arriba, para cuando
 // el organismo de atención de desastres exige su propio formato. El
 // inspector puede generar cualquiera de los dos (o ambos) desde el paso 8.
-addRoute("GET", "/api/inspections/:id/report-oficial.pdf", (req, res, params) => {
+addRoute("GET", "/api/inspections/:id/report-oficial.pdf", async (req, res, params) => {
   try {
-    const doc = buildOfficialReportPdf(params.id);
+    const bytes = await buildOfficialReportPdf(params.id);
     res.writeHead(200, {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="formato-oficial-2a-${params.id}.pdf"`,
     });
-    doc.pipe(res);
+    res.end(Buffer.from(bytes));
     updateInspectionStatus(params.id, "INFORME_GENERADO");
   } catch (err: any) {
     sendJson(res, 404, { error: err.message ?? String(err) });

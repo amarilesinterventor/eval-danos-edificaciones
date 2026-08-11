@@ -138,19 +138,22 @@ completa de justificación en los comentarios de cabecera de `reportPdf.ts` y en
 
 ### 7.1 Formato oficial exacto ("2A - Formulario regional homogenizado")
 
-`src/server/reportPdfOficial.ts` genera un segundo tipo de informe: una réplica vectorial fiel del
-formulario impreso original (mismas 16 secciones, mismo orden, mismas opciones textuales exactas, mismo
-patrón de semaforización de colores), diligenciada con los datos de la inspección, en tamaño Carta
-(612x792pt) igual al PDF fuente. Se ofrece como alternativa al informe rediseñado — no lo reemplaza — para
-cuando el organismo de atención de desastres exige recibir la información en su propio formato oficial.
+`src/server/reportPdfOficial.ts` genera un segundo tipo de informe: **el PDF oficial original, literal**
+(`assets/official-form/2a-formulario-regional-homogenizado.pdf`), cargado con `pdf-lib` y diligenciado
+con los datos de la inspección superpuestos en las coordenadas exactas de cada casilla/campo. No es una
+réplica — es el mismo archivo fuente con marcas dibujadas encima — así que el formato, la distribución,
+los campos y los colores son los del documento oficial por construcción, no por imitación. Se ofrece como
+alternativa al informe rediseñado — no lo reemplaza — para cuando el organismo de atención de desastres
+exige recibir la información en su propio formato oficial.
 
-Se redibuja en vectores en vez de superponer marcas sobre una imagen rasterizada de las páginas originales
-porque el PDF fuente tiene un cmap de fuente no estándar que hace ilegible la extracción automática de
-texto, así que emparejar cada una de las ~169 casillas del original con su campo exacto solo podía hacerse
-a mano (con riesgo de error en un documento oficial); redibujar en vectores garantiza que la casilla y la
-marca de verificación que la llena usan siempre las mismas coordenadas (las calcula la misma función —
-ver `layoutOptions`/`drawOptions` en ese archivo), eliminando el riesgo de desalineación por construcción.
-Ver el detalle completo de esta decisión en `docs/ANALISIS-Y-ARQUITECTURA.md` §10.
+Las coordenadas de las ~185 casillas y ~43 campos de texto del formulario (`src/server/officialFormCoords.ts`)
+se obtuvieron por análisis geométrico de los vectores de dibujo del PDF (no de su texto, que es ilegible
+por un cmap de fuente no estándar) y se verificaron cruzando cada una contra capturas numeradas del
+formulario y contra el orden de opciones de `src/domain/catalog.ts`. Nota de coordenadas: el mapa está en
+el sistema de PyMuPDF (origen arriba-izquierda, Y hacia abajo); `pdf-lib` dibuja en el espacio nativo del
+PDF (origen abajo-izquierda, Y hacia arriba), así que cada Y se convierte con `alturaPágina - y` antes de
+dibujar — ver `toY()` en `reportPdfOficial.ts`. Ver el detalle completo de esta decisión, incluida la
+metodología de detección de casillas, en `docs/ANALISIS-Y-ARQUITECTURA.md` §11.
 
 ## 8. Guía visual de patologías (paso 5 del wizard)
 

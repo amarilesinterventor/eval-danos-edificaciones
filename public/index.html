@@ -31,6 +31,18 @@
       <a href="/inspections.html" class="text-sm text-brand-600 hover:underline">Ver todas →</a>
     </div>
     <div id="recentList" class="space-y-2"></div>
+
+    <div class="card p-4 sm:p-5 mt-8 flex flex-col sm:flex-row items-center gap-4">
+      <img src="/assets/qr-app.png" alt="Código QR con el enlace a esta herramienta" class="w-24 h-24 sm:w-28 sm:h-28 shrink-0 rounded-lg border border-slate-200" />
+      <div class="min-w-0 text-center sm:text-left">
+        <h2 class="text-sm font-semibold text-slate-800">Comparte esta herramienta con otros inspectores</h2>
+        <p class="text-xs text-slate-500 mt-0.5">Escanea el código QR o comparte el enlace para que cualquier inspector la abra directamente desde su celular — sin instalar nada ni crear cuenta.</p>
+        <div class="flex items-center gap-2 mt-2 justify-center sm:justify-start">
+          <code id="appShareUrl" class="text-xs bg-slate-100 text-slate-700 rounded px-2 py-1 break-all">https://eval-danos-edificaciones.onrender.com</code>
+          <button id="copyShareUrlBtn" type="button" class="btn-secondary text-xs px-2 py-1 shrink-0">Copiar</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <footer id="footer"></footer>
@@ -99,6 +111,19 @@
         )
         .join("");
     }
+
+    document.getElementById("copyShareUrlBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("copyShareUrlBtn");
+      const url = document.getElementById("appShareUrl").textContent;
+      try {
+        await navigator.clipboard.writeText(url);
+        const original = btn.textContent;
+        btn.textContent = "¡Copiado!";
+        setTimeout(() => (btn.textContent = original), 1500);
+      } catch {
+        // Sin permiso de portapapeles (p.ej. http sin TLS): el enlace ya está visible para copiar a mano.
+      }
+    });
 
     document.getElementById("newInspectionBtn").addEventListener("click", async () => {
       const btn = document.getElementById("newInspectionBtn");

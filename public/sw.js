@@ -5,7 +5,7 @@
 // arriesgar mostrar datos desactualizados cuando sí hay conexión. Las
 // escrituras (POST/PUT/PATCH/DELETE) NO pasan por aquí — las maneja la cola
 // de sincronización en IndexedDB (ver public/offline.js).
-const CACHE_VERSION = "v7"; // v7: PDF oficial "2A", guía de patologías no estructurales, se quitó logo de Unilibre
+const CACHE_VERSION = "v8"; // v8: PDF oficial "2A" ahora es overlay exacto sobre el PDF fuente, QR para compartir la app
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
@@ -27,6 +27,7 @@ const SHELL_ASSETS = [
   "/assets/logos/sngrd.png",
   "/assets/logos/usaid_miyamoto.png",
   "/assets/logos/utp.png",
+  "/assets/qr-app.png",
 ];
 
 // `cache.addAll()` resuelve sus fetch() respetando la caché HTTP normal del

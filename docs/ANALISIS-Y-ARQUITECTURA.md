@@ -347,3 +347,71 @@ también del artículo WABIM citado en `wabim-bridges`) pidió los siguientes aj
   estructurales y sus anexos de catálogo de patologías en muros no estructurales y en otros materiales —
   pero los dibujos son ilustraciones propias, no reproducciones de las figuras de esa guía (mismo criterio
   de autoría ya aplicado a los diagramas estructurales).
+
+## 11. Despliegue en producción y quinta ronda de feedback
+
+- **Despliegue**: la app se llevó a internet siguiendo el mismo procedimiento que `wabim-bridges` —
+  `git init` (este proyecto no tenía control de versiones hasta ahora), commit inicial, repositorio
+  público en `github.com/amarilesinterventor/eval-danos-edificaciones`, y despliegue en Render (nivel
+  gratis) vía Blueprint (`render.yaml`, ya preparado desde la entrega inicial). URL en producción:
+  **https://eval-danos-edificaciones.onrender.com**. Antes del primer commit se revisó cuidadosamente qué
+  no debía subirse a un repositorio público: los datos reales de prueba (`data/edificaciones.sqlite`,
+  `public/uploads/*`) ya estaban en `.gitignore` desde la entrega inicial; se agregaron además los dos PDF
+  de referencia sueltos en la raíz del proyecto (el formulario fuente y la guía de patologías, esta última
+  con derechos de autor de terceros) — ver más abajo por qué el formulario fuente tuvo que revertirse
+  parcialmente de esa exclusión.
+- **PDF "formato oficial": de réplica en vectores a superposición exacta sobre el PDF fuente.** La cuarta
+  ronda (§10) había resuelto generar el formato oficial *redibujando* el formulario en vectores, para no
+  arriesgarse a superponer marcas sobre una imagen del PDF original sin haber podido verificar con
+  certeza la posición de cada casilla (el texto del PDF fuente es ilegible por su cmap no estándar). El
+  usuario pidió explícitamente algo más estricto: **"exactamente el mismo formato PDF... la misma
+  distribución y exactamente los mismos campos, los mismos colores"** — es decir, no una réplica fiel sino
+  el documento oficial literal, diligenciado. Esto obligó a resolver el problema que la cuarta ronda había
+  evitado: mapear con certeza la coordenada de cada casilla del PDF fuente. Se logró así (documentado en
+  detalle porque es el trabajo más delicado de todo el proyecto — un error aquí significa marcar la
+  casilla equivocada en un documento oficial):
+  1. **Detección geométrica de casillas, no por texto**: un script Python/PyMuPDF agrupa los segmentos de
+     línea del PDF (independientes del texto, que es ilegible) que forman cada casilla — buscando, para
+     cada segmento horizontal candidato a "borde superior", el segmento horizontal "borde inferior" a
+     8-14pt de distancia con el mismo rango en X, y verificando que existan los dos segmentos verticales
+     que los conectan. Este método (más robusto que un primer intento de unión-búsqueda por proximidad de
+     esquina, que se enredaba con las ~450 líneas subrayadas del formulario y fusionaba grupos por
+     coincidencia de coordenadas) encontró 108 casillas en la página 1 y 74 en la página 2, más 3 casillas
+     de color de la sección 12 (rectángulos de relleno anchos, detectados por separado). 185 casillas en
+     total, más 43 campos de texto (líneas subrayadas).
+  2. **Verificación cruzada, no solo detección**: cada casilla se asignó a un campo del dominio (p.ej.
+     `sev.COLUMNAS.M`, `use.RESIDENCIAL`) cruzando tres fuentes independientes — (a) la posición geométrica
+     agrupada por fila/columna, (b) el orden exacto de las opciones en `src/domain/catalog.ts` (ya
+     transcrito del formulario en la fase inicial del proyecto) y (c) capturas del formulario con cada
+     casilla numerada y resaltada, generadas por el mismo script y leídas una por una — incluyendo recortes
+     ampliados de zonas densas para evitar leer mal un número pequeño. Cuando el conteo de casillas
+     encontradas en una sección no coincidía con el número de opciones del catálogo (p.ej. sección 14 solo
+     traía 8 de 17), se investigó la causa en vez de asumir que sobraban opciones — y en todos los casos la
+     causa fue una casilla real que el detector geométrico aún no encontraba, nunca una opción de más.
+  3. **Superposición con `pdf-lib`**: `src/server/reportPdfOficial.ts` ahora carga el PDF fuente real
+     (`assets/official-form/2a-formulario-regional-homogenizado.pdf`) con `pdf-lib` y dibuja una X o el
+     texto correspondiente en las coordenadas de `officialFormCoords.ts` (el mapa de 185+43 coordenadas
+     verificado en el paso anterior). Detalle importante de coordenadas: el mapa se generó con PyMuPDF
+     (origen arriba-izquierda, Y crece hacia abajo) pero `pdf-lib` dibuja en el espacio nativo del PDF
+     (origen abajo-izquierda, Y crece hacia arriba) — cada Y se convierte con `alturaPágina - y` antes de
+     dibujar. El resultado es, literalmente, el PDF oficial con los datos de la inspección encima — no una
+     réplica — así que el formato, la distribución, los campos y los colores son exactamente los del
+     documento original por construcción.
+  4. **Corrección visual tras la primera prueba**: la X dibujada corner-a-corner en las 3 casillas de color
+     de la sección 12 (rectángulos anchos, ~31x11pt, a diferencia de las demás casillas que son ~11x11pt)
+     salía casi plana y difícil de leer. Se cambió `drawCheck()` para dibujar una X centrada y
+     proporcional usando el lado más corto del rectángulo como base del tamaño, en vez de ir de esquina a
+     esquina — legible sin importar la proporción de la casilla.
+  5. **Validado** generando el PDF para una inspección completa (con overlay verificado visualmente campo
+     por campo contra las dos páginas reales) y para un borrador vacío (ningún campo diligenciado, sin
+     casillas marcadas, sin errores).
+  - El PDF fuente pasó a ser un asset necesario en tiempo de ejecución (antes se excluía del repositorio
+    por considerarse solo material de referencia): vive en `assets/official-form/`, sí se versiona (es un
+    formulario gubernamental público, no una publicación con derechos reservados de terceros como la guía
+    de patologías), y `scripts/copy-assets.mjs` lo copia a `dist/` igual que `schema.sql`.
+- **Código QR para compartir la app**: se generó un QR (color de marca, corrección de errores nivel M)
+  apuntando a la URL de producción, verificado decodificándolo de vuelta antes de usarlo. Vive en
+  `public/assets/qr-app.png` y se agregó una tarjeta "Comparte esta herramienta con otros inspectores" en
+  el Panel (`public/index.html`) con el QR, el enlace en texto (para quien no pueda escanear) y un botón
+  de copiar — para que cualquier inspector que ya tenga la app abierta pueda mostrárselo a un colega y que
+  este acceda desde su celular sin instalar nada ni crear cuenta.

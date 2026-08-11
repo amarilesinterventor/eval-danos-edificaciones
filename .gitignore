@@ -9,8 +9,16 @@ public/styles.css
 .env
 .DS_Store
 
-# PDFs de referencia usados solo para el análisis inicial (no los lee el
-# servidor en tiempo de ejecución) — se excluyen del repo público porque uno
-# es una publicación con derechos de autor de terceros (FOPAE-AIS) y el otro
-# pesa ~250KB sin aportar nada al funcionamiento de la app.
-/*.pdf
+# PDF de referencia usado solo para el análisis inicial (no lo lee el
+# servidor en tiempo de ejecución) — se excluye del repo público por ser una
+# publicación con derechos de autor de terceros (FOPAE-AIS, ~15MB).
+/guia-patologias.pdf
+
+# Copia de trabajo en la raíz (la copia que sí se versiona y se usa en
+# tiempo de ejecución vive en assets/official-form/, ver más abajo).
+/2A-Formulario regional homogenizado.pdf
+
+# El formulario oficial fuente SÍ se necesita en tiempo de ejecución (base
+# del PDF "formato oficial" — ver src/server/reportPdfOficial.ts) y es un
+# formato gubernamental público, no una publicación con derechos reservados
+# de terceros: vive en assets/official-form/ y SÍ se versiona.

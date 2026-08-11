@@ -1,703 +1,272 @@
 /**
- * Generador del "formato oficial" — réplica vectorial fiel del formulario
- * impreso "2A - Formulario regional homogenizado" (Formulario Regional para
- * Evaluación Rápida de Daños en Edificaciones, V.1.0 - 03/2023), diligenciada
- * con los datos de la inspección, para el caso en que el organismo de
- * atención de desastres exija su propio formato oficial en vez del informe
- * rediseñado de `reportPdf.ts`. El inspector puede generar CUALQUIERA de los
- * dos formatos (o ambos) desde el paso 8 — ver GET /report.pdf y
- * GET /report-oficial.pdf en src/server/server.ts.
+ * Generador del "formato oficial" — overlay EXACTO sobre las páginas reales
+ * del formulario impreso original ("2A - Formulario regional homogenizado",
+ * V.1.0 - 03/2023): mismo diseño, misma distribución, mismos campos, mismos
+ * colores — porque literalmente son las mismas dos páginas del PDF fuente
+ * (`assets/official-form/2a-formulario-regional-homogenizado.pdf`), con los
+ * datos de la inspección dibujados encima en las coordenadas exactas de
+ * cada casilla/campo. Alternativa al informe rediseñado de `reportPdf.ts` —
+ * el inspector puede generar cualquiera de los dos (o ambos) desde el paso
+ * 8, para el caso en que el organismo de atención de desastres exija
+ * recibir la información en su propio formato oficial.
  *
- * Enfoque de implementación (decisión documentada en
- * docs/ANALISIS-Y-ARQUITECTURA.md §10): en vez de superponer casillas sobre
- * una imagen rasterizada de las páginas originales del PDF fuente, este
- * archivo REDIBUJA el formulario en vectores (mismas 16 secciones, mismo
- * orden, mismas opciones textuales exactas del formulario impreso — ver la
- * transcripción completa en docs/ANALISIS-Y-ARQUITECTURA.md §1 — y el mismo
- * patrón de semaforización de colores). Se descartó la superposición sobre
- * el PDF original porque: (a) el texto del PDF fuente tiene un cmap de
- * fuente no estándar que hace que la extracción automática de texto salga
- * ilegible, así que emparejar cada una de las ~169 casillas detectadas con
- * su campo exacto solo podía hacerse leyendo capturas anotadas a mano, con
- * riesgo real de marcar una casilla equivocada en un documento que puede
- * usar una entidad de atención de desastres; y (b) redibujar en vectores
- * garantiza que la casilla que se dibuja y la marca de verificación que la
- * llena usan exactamente las mismas coordenadas (las calcula el mismo
- * código), eliminando ese riesgo por construcción. El resultado reproduce
- * fielmente la estructura, el texto y el orden del formulario oficial —
- * que es lo que la entidad receptora necesita reconocer — con el beneficio
- * adicional de texto vectorial nítido en vez de una imagen de fondo.
+ * Historial de esta implementación (ver docs/ANALISIS-Y-ARQUITECTURA.md
+ * §10 para el detalle completo): la primera versión de este archivo
+ * REDIBUJABA el formulario en vectores en vez de superponer sobre el PDF
+ * real, precisamente para evitar el riesgo de marcar una casilla en el
+ * lugar equivocado (el texto del PDF fuente tiene un cmap de fuente no
+ * estándar que hace ilegible la extracción automática, así que emparejar
+ * cada casilla con su campo solo podía hacerse a mano). Ese riesgo se
+ * resolvió mapeando las ~185 casillas y ~43 campos de texto del formulario
+ * mediante análisis geométrico de los vectores de dibujo del PDF (no de su
+ * texto) — agrupando los segmentos de línea que forman cada casilla y
+ * cruzando cada coordenada resultante contra capturas numeradas del
+ * formulario para verificarla — ver `officialFormCoords.ts` (los datos) y
+ * la metodología documentada en §10. Con el mapa de coordenadas ya
+ * verificado, superponer sobre el PDF real es estrictamente más fiel que
+ * redibujar (es, literalmente, el documento oficial) y ya no carga ese
+ * riesgo, porque las coordenadas fueron validadas una por una antes de
+ * usarse aquí.
  */
-import PDFDocument from "pdfkit";
-import { existsSync } from "node:fs";
+import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getInspection } from "../db/queries.js";
-import {
-  THREAT_TYPES,
-  BUILDING_USES,
-  STRUCTURAL_SYSTEMS,
-  FLOOR_SYSTEMS,
-  ROOF_SUPPORT_SYSTEMS,
-  ROOF_TYPES,
-  SITE_MORPHOLOGY,
-  SAFETY_RECOMMENDATIONS,
-  HABITABILITY_META,
-  getElementDef,
-} from "../domain/catalog.js";
+import { CHECKBOX_COORDS, BLANK_COORDS, type BoxCoord, type LineCoord } from "./officialFormCoords.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = join(__dirname, "..", "..", "public");
-const LOGOS_DIR = join(PUBLIC_DIR, "assets", "logos");
-function logoPath(name: string): string {
-  return join(LOGOS_DIR, name);
-}
+const SOURCE_PDF_PATH = join(__dirname, "..", "..", "assets", "official-form", "2a-formulario-regional-homogenizado.pdf");
 
-type Doc = PDFKit.PDFDocument;
-
-// --- Geometría de página: tamaño Carta, igual al formulario impreso original
-// (confirmado al renderizar el PDF fuente: 612x792pt = Carta) ---------------
-const PAGE_MARGIN = 24;
-const PAGE_WIDTH = 612;
+// Las coordenadas en officialFormCoords.ts están en el sistema de PyMuPDF
+// (origen arriba-izquierda, Y crece hacia abajo — igual que la pantalla).
+// pdf-lib usa el espacio nativo del PDF (origen abajo-izquierda, Y crece
+// hacia arriba), así que toda coordenada Y debe convertirse con
+// `PAGE_HEIGHT - y` antes de dibujar. Ambas páginas del formulario fuente
+// son tamaño Carta (612x792pt).
 const PAGE_HEIGHT = 792;
-const CONTENT_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2;
-const FOOTER_RESERVED = 34;
-
-const INK = "#0f172a";
-const BORDER = "#94a3b8";
-const LABEL_COLOR = "#64748b";
-const BAR_COLOR = "#1e3a5f";
-
-function bottomLimit(doc: Doc): number {
-  return doc.page.height - FOOTER_RESERVED;
-}
-/** Reserva `needed` puntos verticales desde `doc.y`; salta de página si no caben. Debe llamarse con `doc.y` ya sincronizado con la posición real del cursor. */
-function ensureSpace(doc: Doc, needed: number) {
-  if (doc.y + needed > bottomLimit(doc)) {
-    doc.addPage();
-    addPageHeader(doc);
-  }
+function toY(y: number): number {
+  return PAGE_HEIGHT - y;
 }
 
-// ---------------------------------------------------------------------------
-// Primitivas de dibujo: casilla de verificación (con o sin relleno de color
-// pre-impreso, igual al semáforo del formulario original) y opciones en
-// flujo (checkbox + etiqueta, con ajuste de línea automático).
-// ---------------------------------------------------------------------------
-function drawCheckbox(doc: Doc, x: number, y: number, checked: boolean, size: number, fill?: string) {
-  if (fill) {
-    doc.rect(x, y, size, size).fill(fill);
-  }
-  doc.rect(x, y, size, size).lineWidth(0.6).strokeColor("#000000").stroke();
-  if (checked) {
-    doc.save();
-    doc.lineWidth(1.3).strokeColor("#000000").lineCap("round");
-    const pad = size * 0.18;
-    doc.moveTo(x + pad, y + pad).lineTo(x + size - pad, y + size - pad).stroke();
-    doc.moveTo(x + size - pad, y + pad).lineTo(x + pad, y + size - pad).stroke();
-    doc.restore();
-  }
+const INK = rgb(0.05, 0.05, 0.12);
+const CHECK_COLOR = rgb(0, 0, 0);
+
+/**
+ * Dibuja una X centrada y proporcional dentro de la casilla. No usa
+ * directamente las esquinas del rectángulo: la mayoría de casillas son
+ * ~11x11pt (cuadradas) y ahí no hay diferencia, pero las 3 casillas de
+ * color de la sección 12 (Habitable/Uso restringido/No habitable) son
+ * rectángulos anchos (~31x11pt) — una X esquina-a-esquina ahí sale casi
+ * plana y difícil de leer. Usar el lado más corto como base del tamaño de
+ * la X, centrada en el rectángulo, da una marca clara sin importar la
+ * proporción de la casilla.
+ */
+function drawCheck(page: PDFPage, coord: BoxCoord) {
+  const { x0, y0, x1, y1 } = coord;
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const size = Math.min(w, h) * 0.72;
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const half = size / 2;
+  const top = toY(cy - half);
+  const bottom = toY(cy + half);
+  page.drawLine({ start: { x: cx - half, y: top }, end: { x: cx + half, y: bottom }, thickness: 1.3, color: CHECK_COLOR, lineCap: 1 });
+  page.drawLine({ start: { x: cx + half, y: top }, end: { x: cx - half, y: bottom }, thickness: 1.3, color: CHECK_COLOR, lineCap: 1 });
 }
 
-interface SemOption {
-  code: string;
-  label: string;
-  fill?: string;
-}
-interface LaidOutItem extends SemOption {
-  checked: boolean;
-  dx: number;
-  dy: number;
-}
-interface OptionsLayout {
-  items: LaidOutItem[];
-  height: number;
-}
-
-const CHECKBOX_SIZE = 7.2;
-const OPTION_FONT = 7.2;
-const EMPTY_SET: Set<string> = new Set();
-
-/** Calcula la posición (relativa a un origen) de cada opción, ajustando línea cuando se excede el ancho — sin dibujar todavía. Mismo objeto se usa luego para dibujar, así que medida y dibujo nunca pueden desincronizarse. */
-function layoutOptions(doc: Doc, options: SemOption[], width: number, selected: Set<string>, otherText: string | undefined, rowH = 11.5, gapX = 13): OptionsLayout {
-  doc.font("Helvetica").fontSize(OPTION_FONT);
-  let cx = 0;
-  let cy = 0;
-  const items: LaidOutItem[] = [];
-  for (const o of options) {
-    const checked = selected.has(o.code);
-    const label = checked && o.code === "OTRO" && otherText ? `${o.label}: ${otherText}` : o.label;
-    const w = CHECKBOX_SIZE + 4 + doc.widthOfString(label);
-    if (cx > 0 && cx + w > width) {
-      cx = 0;
-      cy += rowH;
+function drawFieldText(page: PDFPage, font: PDFFont, coord: LineCoord, text: string | null | undefined) {
+  if (!text) return;
+  const maxWidth = coord.x1 - coord.x0 - 2;
+  if (maxWidth <= 4) return;
+  let size = 8;
+  while (size > 5.5 && font.widthOfTextAtSize(text, size) > maxWidth) size -= 0.5;
+  let display = text;
+  if (font.widthOfTextAtSize(display, size) > maxWidth) {
+    while (display.length > 1 && font.widthOfTextAtSize(display + "…", size) > maxWidth) {
+      display = display.slice(0, -1);
     }
-    items.push({ ...o, label, checked, dx: cx, dy: cy });
-    cx += w + gapX;
+    display += "…";
   }
-  return { items, height: cy + rowH };
+  page.drawText(display, { x: coord.x0 + 1, y: toY(coord.y0) + 1.6, size, font, color: INK });
 }
-function drawOptions(doc: Doc, x: number, y: number, layout: OptionsLayout) {
-  for (const it of layout.items) {
-    drawCheckbox(doc, x + it.dx, y + it.dy + 1.5, it.checked, CHECKBOX_SIZE, it.fill);
-    doc.font("Helvetica").fontSize(OPTION_FONT).fillColor(INK).text(it.label, x + it.dx + CHECKBOX_SIZE + 4, y + it.dy, { lineBreak: false });
+
+/** Contexto compartido para todas las funciones `mark*`/`fill*` de abajo — evita pasar `pages`/`font` en cada llamada. */
+interface Ctx {
+  pages: PDFPage[];
+  font: PDFFont;
+}
+function mark(ctx: Ctx, code: string) {
+  const coord = CHECKBOX_COORDS[code];
+  if (!coord) return; // opción sin casilla en el formulario impreso (p.ej. 5.4 Otro) — se omite con seguridad
+  drawCheck(ctx.pages[coord.page - 1], coord);
+}
+function fill(ctx: Ctx, code: string, text: string | null | undefined) {
+  const coord = BLANK_COORDS[code];
+  if (!coord) return;
+  drawFieldText(ctx.pages[coord.page - 1], ctx.font, coord, text);
+}
+/** Marca todas las casillas de un catálogo multi-selección (prefijo + código de catálogo) y, si corresponde, escribe el texto de "Otro" en su campo. */
+function markCatalogMulti(ctx: Ctx, prefix: string, items: Array<{ code: string; otherText?: string }> | undefined, otherFieldCode?: string) {
+  for (const it of items ?? []) {
+    mark(ctx, `${prefix}.${it.code}`);
+    if (it.code === "OTRO" && it.otherText && otherFieldCode) fill(ctx, otherFieldCode, it.otherText);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Campos de un formulario: caja con etiqueta pequeña arriba y, debajo, o bien
-// un valor de texto o bien un grupo de casillas de verificación (nunca los
-// dos superpuestos — la altura de la caja se calcula a partir del contenido
-// real que va a dibujarse, así que no hay riesgo de que el texto tape a las
-// casillas ni viceversa).
-// ---------------------------------------------------------------------------
-interface FieldSpec {
-  label: string;
-  value?: string;
-  weight?: number;
-  checkboxes?: SemOption[];
-  checkboxSelected?: Set<string>;
-  checkboxOther?: string;
-}
-function fieldsRow(doc: Doc, x: number, y: number, width: number, fields: FieldSpec[], minRowH = 24): number {
-  const gap = 6;
-  const totalWeight = fields.reduce((s, f) => s + (f.weight || 1), 0);
-  const usable = width - gap * (fields.length - 1);
-  const widths = fields.map((f) => (usable * (f.weight || 1)) / totalWeight);
-  const layouts = fields.map((f, i) => (f.checkboxes ? layoutOptions(doc, f.checkboxes, widths[i] - 8, f.checkboxSelected ?? EMPTY_SET, f.checkboxOther, 11, 10) : null));
-  const maxCbHeight = Math.max(0, ...layouts.map((l) => (l ? l.height : 0)));
-  const h = layouts.some(Boolean) ? Math.max(minRowH, 13 + maxCbHeight + 4) : minRowH;
-  let cx = x;
-  fields.forEach((f, i) => {
-    const w = widths[i];
-    doc.rect(cx, y, w, h).lineWidth(0.6).strokeColor(BORDER).stroke();
-    doc.fontSize(6.1).font("Helvetica-Bold").fillColor(LABEL_COLOR).text(f.label.toUpperCase(), cx + 4, y + 3, { width: w - 8, lineBreak: false });
-    const layout = layouts[i];
-    if (layout) {
-      drawOptions(doc, cx + 4, y + 13, layout);
-    } else {
-      doc.fontSize(8.3).font("Helvetica").fillColor(INK).text(f.value || "—", cx + 4, y + 12.5, { width: w - 8, height: h - 14, ellipsis: true });
-    }
-    cx += w + gap;
-  });
-  return y + h;
+function markCatalogSingle(ctx: Ctx, prefix: string, code: string | null | undefined, otherText?: string | null, otherFieldCode?: string) {
+  if (!code) return;
+  mark(ctx, `${prefix}.${code}`);
+  if (code === "OTRO" && otherText && otherFieldCode) fill(ctx, otherFieldCode, otherText);
 }
 
-/** Encabezado de sección numerada — barra oscura con el número/título exacto del formulario, replicado del original. */
-function sectionHeader(doc: Doc, x: number, y: number, width: number, title: string, subtitle?: string): number {
-  const barH = 14.5;
-  doc.rect(x, y, width, barH).fill(BAR_COLOR);
-  doc.fontSize(8.2).font("Helvetica-Bold").fillColor("#ffffff").text(title.toUpperCase(), x + 6, y + 3.2, { width: width - 12, lineBreak: false });
-  let h = barH;
-  if (subtitle) {
-    doc.fontSize(6.4).font("Helvetica-Oblique").fillColor(LABEL_COLOR).text(subtitle, x, y + barH + 2, { width });
-    h += 11;
-  }
-  return y + h + 3;
-}
-
-function groupLabel(doc: Doc, x: number, y: number, text: string): number {
-  doc.fontSize(7).font("Helvetica-Bold").fillColor(INK).text(text, x, y, { lineBreak: false });
-  return y + 10;
-}
-
-// ---------------------------------------------------------------------------
-// Selecciones auxiliares — traduce los datos de la inspección (arreglos
-// {code,otherText} o campos escalares) a Set<code> + texto "Otro" para
-// alimentar layoutOptions().
-// ---------------------------------------------------------------------------
-function multiSelection(items: Array<{ code: string; otherText?: string }> | undefined): { set: Set<string>; other?: string } {
-  const set = new Set((items ?? []).map((it) => it.code));
-  const other = (items ?? []).find((it) => it.code === "OTRO")?.otherText;
-  return { set, other };
-}
-function singleSelection(code: string | null | undefined): Set<string> {
-  return new Set(code ? [code] : []);
-}
-function boolSelection(v: number | null | undefined): Set<string> {
-  if (v == null) return EMPTY_SET;
-  return new Set([v ? "SI" : "NO"]);
-}
-
-const YES_NO = (yesFill?: string): SemOption[] => [
-  { code: "SI", label: "Sí", fill: yesFill },
-  { code: "NO", label: "No" },
-];
-const TRI_STATE = (yesFill?: string): SemOption[] => [
-  { code: "SI", label: "Sí", fill: yesFill },
-  { code: "NO", label: "No" },
-  { code: "NO_ES_CLARO", label: "No es claro" },
-];
-function severityOptions(tier: "CRITICO" | "SECUNDARIO"): SemOption[] {
-  const badFill = tier === "CRITICO" ? "#ef4444" : "#eab308";
-  return [
-    { code: "NL", label: "N/L", fill: "#22c55e" },
-    { code: "M", label: "M", fill: badFill },
-    { code: "S", label: "S", fill: badFill },
-  ];
-}
-
-/** Fila de elemento (secciones 9/10): nombre + 3 casillas N/L·M·S en línea. Reserva su propio espacio — puede llamarse en un bucle sin cálculo previo. */
-function elementRow(doc: Doc, x: number, width: number, name: string, tier: "CRITICO" | "SECUNDARIO", severity: string | null) {
-  const rowH = 13;
-  ensureSpace(doc, rowH);
-  const y = doc.y;
-  const nameW = 230;
-  doc.fontSize(7.8).font("Helvetica").fillColor(INK).text(name, x, y + 1.5, { width: nameW, lineBreak: false });
-  const layout = layoutOptions(doc, severityOptions(tier), width - nameW, singleSelection(severity), undefined, rowH, 20);
-  drawOptions(doc, x + nameW, y, layout);
-  doc.y = y + rowH;
-  doc.x = PAGE_MARGIN;
-}
-
-// ---------------------------------------------------------------------------
-// Encabezado y pie de página (mismos logos institucionales que trae el
-// propio formulario oficial — igual criterio y misma nota que reportPdf.ts).
-// ---------------------------------------------------------------------------
-function addPageHeader(doc: Doc) {
-  const y = PAGE_MARGIN - 4;
-  const logoH = 26;
-  const sngrd = logoPath("sngrd.png");
-  const usaidMiyamoto = logoPath("usaid_miyamoto.png");
-  if (existsSync(sngrd)) doc.image(sngrd, PAGE_MARGIN, y, { height: logoH });
-  if (existsSync(usaidMiyamoto)) {
-    const w = logoH * (1040 / 272);
-    doc.image(usaidMiyamoto, PAGE_MARGIN + CONTENT_WIDTH - w, y, { height: logoH });
-  }
-  const titleX = PAGE_MARGIN + 96;
-  const titleWidth = CONTENT_WIDTH - 192;
-  const titleText = "FORMULARIO REGIONAL PARA EVALUACIÓN RÁPIDA DE DAÑOS EN EDIFICACIONES";
-  doc.fontSize(9.5).font("Helvetica-Bold").fillColor(BAR_COLOR);
-  const titleHeight = doc.heightOfString(titleText, { width: titleWidth, align: "center" });
-  doc.text(titleText, titleX, y + 2, { width: titleWidth, align: "center" });
-  doc.fontSize(6.6).font("Helvetica").fillColor(LABEL_COLOR).text("2A - Formulario regional homogenizado · V.1.0 - 03/2023", titleX, y + 2 + titleHeight + 1, { width: titleWidth, align: "center" });
-  doc.y = Math.max(y + 2 + titleHeight + 12, y + logoH) + 5;
-  doc.x = PAGE_MARGIN;
-  doc.moveTo(PAGE_MARGIN, doc.y).lineTo(PAGE_MARGIN + CONTENT_WIDTH, doc.y).lineWidth(1).strokeColor(BAR_COLOR).stroke();
-  doc.y += 5;
-  doc.x = PAGE_MARGIN;
-  doc.fillColor(INK);
-}
-
-function addPageFooter(doc: Doc, formNumber: string | null | undefined, pageLabel: string) {
-  const seals = logoPath("entidades_regionales.png");
-  const y = doc.page.height - FOOTER_RESERVED + 5;
-  const originalBottomMargin = doc.page.margins.bottom;
-  doc.page.margins.bottom = 0;
-  if (existsSync(seals)) {
-    try {
-      doc.image(seals, PAGE_MARGIN, y, { height: 13 });
-    } catch {
-      // un logo ilegible no debe romper el documento
-    }
-  }
-  doc.fontSize(6.3).fillColor("#94a3b8").text(
-    `No. formulario: ${formNumber || "—"}   ·   Diligenciado digitalmente — Herramienta de Evaluación Rápida de Daños en Edificaciones (Ing. Cristhian Camilo Amariles López · UTP)   ·   ${pageLabel}`,
-    PAGE_MARGIN,
-    y + 17,
-    { width: CONTENT_WIDTH, align: "center" },
-  );
-  doc.page.margins.bottom = originalBottomMargin;
-}
-
-function sketchBox(doc: Doc, x: number, y: number, w: number, h: number, label: string, photoPath: string | null) {
-  doc.rect(x, y, w, h).lineWidth(0.75).strokeColor("#000000").stroke();
-  doc.fontSize(7.2).font("Helvetica-Bold").fillColor(INK).text(label, x + 4, y + 3);
-  if (photoPath && existsSync(photoPath)) {
-    try {
-      doc.image(photoPath, x + 3, y + 15, { fit: [w - 6, h - 18], align: "center", valign: "center" });
-      return;
-    } catch {
-      // si la imagen no se puede leer, cae al recuadro cuadriculado de abajo
-    }
-  }
-  doc.save();
-  doc.lineWidth(0.3).strokeColor("#e2e8f0");
-  for (let gx = x + 8; gx < x + w - 4; gx += 10) doc.moveTo(gx, y + 16).lineTo(gx, y + h - 4).stroke();
-  for (let gy = y + 20; gy < y + h - 4; gy += 10) doc.moveTo(x + 4, gy).lineTo(x + w - 4, gy).stroke();
-  doc.restore();
-}
-
-const HAB_OPTIONS: SemOption[] = [
-  { code: "VERDE", label: "Habitable", fill: "#22c55e" },
-  { code: "AMARILLO", label: "Uso restringido", fill: "#eab308" },
-  { code: "ROJO", label: "No habitable", fill: "#ef4444" },
-];
-const DMG_OPTIONS: SemOption[] = [
-  { code: "NINGUNO_MENOR", label: "Ninguno/Menor", fill: "#22c55e" },
-  { code: "MODERADO", label: "Moderado", fill: "#eab308" },
-  { code: "SEVERO", label: "Severo", fill: "#ef4444" },
+const SEVERITY_ELEMENT_CODES = [
+  "COLUMNAS", "MUROS_PORTANTES", "VIGAS", "NODOS_CONEXION", "RIOSTRAS", "ENTREPISO",
+  "MUROS_FACHADA_ANTEPECHOS", "MUROS_DIVISORIOS", "VENTANALES_VIDRIOS_FACHADA", "CIELO_RASO_LUMINARIAS",
+  "CUBIERTAS", "ESCALERAS", "ASCENSORES", "BALCONES", "TANQUES_ELEVADOS", "INSTALACIONES_GAS",
+  "INSTALACIONES_ELECTRICAS", "ACUEDUCTO_ALCANTARILLADO", "OTROS",
 ];
 
-// =============================================================================
-export function buildOfficialReportPdf(inspectionId: string): Doc {
+export async function buildOfficialReportPdf(inspectionId: string): Promise<Uint8Array> {
   const insp = getInspection(inspectionId) as any;
   if (!insp) throw new Error(`Inspección no encontrada: ${inspectionId}`);
+  if (!existsSync(SOURCE_PDF_PATH)) throw new Error(`No se encontró el formulario oficial fuente en ${SOURCE_PDF_PATH}`);
 
-  const doc = new PDFDocument({ size: [PAGE_WIDTH, PAGE_HEIGHT], margin: PAGE_MARGIN, bufferPages: true });
-  const X = PAGE_MARGIN;
-  const W = CONTENT_WIDTH;
-
-  addPageHeader(doc);
-
-  // --- Identificación general (No. formulario / ID zona / ID grupo) --------
-  ensureSpace(doc, 26);
-  doc.y = fieldsRow(doc, X, doc.y, W, [
-    { label: "No. de formulario", value: insp.form_number ?? "" },
-    { label: "ID Zona", value: insp.zone_id ?? "" },
-    { label: "ID Grupo", value: insp.group_id ?? "" },
-  ]);
-  doc.y += 4;
-  doc.x = X;
+  const srcBytes = readFileSync(SOURCE_PDF_PATH);
+  const pdfDoc = await PDFDocument.load(srcBytes);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const pages = pdfDoc.getPages();
+  const ctx: Ctx = { pages, font };
 
   // =========================================================================
-  // 1. IDENTIFICACIÓN DE LA EVALUACIÓN
+  // Encabezado / identificación general
   // =========================================================================
-  {
-    const threatSel = multiSelection(insp.threatTypes);
-    const threatLayout = layoutOptions(doc, THREAT_TYPES.map((t) => ({ code: t.code, label: t.label })), W, threatSel.set, threatSel.other);
-    ensureSpace(doc, 14.5 + 3 + 27 * 2 + 8 + 10 + threatLayout.height + 6);
-    let y = sectionHeader(doc, X, doc.y, W, "1. Identificación de la evaluación");
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Nombre del evaluador", value: insp.evaluator_name ?? "", weight: 2 },
-      { label: "Fecha", value: insp.inspection_date ?? "" },
-      { label: "Hora", value: insp.inspection_time ?? "" },
-      { label: "Periodo", checkboxes: [{ code: "am", label: "a.m." }, { code: "pm", label: "p.m." }], checkboxSelected: singleSelection(insp.inspection_time_period), weight: 0.9 },
-    ]);
-    y += 4;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Entidad", value: insp.entity ?? "", weight: 2 },
-      { label: "ID Grupo", value: insp.group_id ?? "" },
-      { label: "Persona de contacto", value: insp.contact_person ?? "", weight: 1.6 },
-      { label: "Núm. de contacto", value: insp.contact_phone ?? "", weight: 1.2 },
-    ]);
-    y += 6;
-    y = groupLabel(doc, X, y, "Tipo de amenaza:");
-    drawOptions(doc, X, y, threatLayout);
-    y += threatLayout.height + 4;
-    doc.y = y;
-    doc.x = X;
+  fill(ctx, "formNumber", insp.form_number);
+  fill(ctx, "zoneId", insp.zone_id);
+
+  // --- 1. Identificación de la evaluación ---
+  fill(ctx, "evaluatorName", insp.evaluator_name);
+  fill(ctx, "inspectionDate", insp.inspection_date);
+  fill(ctx, "inspectionTime", insp.inspection_time);
+  if (insp.inspection_time_period === "am") mark(ctx, "inspectionTimePeriod.am");
+  if (insp.inspection_time_period === "pm") mark(ctx, "inspectionTimePeriod.pm");
+  fill(ctx, "groupId", insp.group_id);
+  fill(ctx, "entity", insp.entity);
+  fill(ctx, "contactPerson", insp.contact_person);
+  fill(ctx, "contactPhone", insp.contact_phone);
+  markCatalogMulti(ctx, "threat", insp.threatTypes, "threatOtherText");
+
+  // --- 2. Clasificación de habitabilidad y nivel de daño ---
+  if (insp.inspection_type === "EXTERIOR") mark(ctx, "inspectionType.EXTERIOR");
+  if (insp.inspection_type === "COMPLETA") mark(ctx, "inspectionType.COMPLETA");
+  markCatalogSingle(ctx, "habitability", insp.habitability);
+  markCatalogSingle(ctx, "damageLevel", insp.damage_level);
+
+  // --- 3. Información general ---
+  fill(ctx, "department", insp.department);
+  fill(ctx, "municipality", insp.municipality);
+  fill(ctx, "neighborhood", insp.neighborhood);
+  if (insp.area_type === "URBANO") mark(ctx, "areaType.URBANO");
+  if (insp.area_type === "RURAL") mark(ctx, "areaType.RURAL");
+  fill(ctx, "longitude", insp.longitude != null ? String(insp.longitude) : null);
+  fill(ctx, "latitude", insp.latitude != null ? String(insp.latitude) : null);
+
+  // --- 4. Identificación de la edificación ---
+  fill(ctx, "address", insp.address);
+  fill(ctx, "buildingName", insp.building_name);
+  markCatalogMulti(ctx, "use", insp.buildingUses, "useOtherText");
+  fill(ctx, "floorsAboveGround", insp.floors_above_ground != null ? String(insp.floors_above_ground) : null);
+  fill(ctx, "basements", insp.basements != null ? String(insp.basements) : null);
+  if (insp.building_ownership === "PUBLICA") mark(ctx, "buildingOwnership.PUBLICA");
+  if (insp.building_ownership === "PRIVADA") mark(ctx, "buildingOwnership.PRIVADA");
+  fill(ctx, "frontDimension", insp.front_dimension != null ? String(insp.front_dimension) : null);
+  fill(ctx, "depthDimension", insp.depth_dimension != null ? String(insp.depth_dimension) : null);
+
+  // --- 5. Sistema estructural, entrepiso y cubierta ---
+  markCatalogMulti(ctx, "struct", insp.structuralSystems, "structuralSystemOtherText");
+  markCatalogMulti(ctx, "floor", insp.floorSystems, "floorSystemOtherText");
+  markCatalogMulti(ctx, "roofsup", insp.roofSupportSystems, "roofSupportOtherText");
+  // 5.4 Tipo de cubierta: el formulario impreso no tiene casilla "Otro" (ver
+  // docs/ANALISIS-Y-ARQUITECTURA.md) — markCatalogMulti omite con seguridad
+  // cualquier código sin coordenada, así que un "Otro" elegido en la app
+  // simplemente no deja marca aquí (no hay dónde marcarla en el original).
+  markCatalogMulti(ctx, "roof", insp.roofTypes);
+
+  // --- 6. Condiciones preexistentes y de entorno ---
+  markCatalogSingle(ctx, "morph", insp.site_morphology, insp.site_morphology_other, "siteMorphologyOtherText");
+  if (insp.water_body_threat === 1) mark(ctx, "waterBodyThreat.SI");
+  if (insp.water_body_threat === 0) mark(ctx, "waterBodyThreat.NO");
+  fill(ctx, "waterBodyDistance", insp.water_body_distance != null ? String(insp.water_body_distance) : null);
+  fill(ctx, "waterBodyNotes", insp.water_body_notes);
+  if (insp.weak_story === 1) mark(ctx, "weakStory.SI");
+  if (insp.weak_story === 0) mark(ctx, "weakStory.NO");
+  if (insp.short_column === 1) mark(ctx, "shortColumn.SI");
+  if (insp.short_column === 0) mark(ctx, "shortColumn.NO");
+  if (insp.stiffness_change === 1) mark(ctx, "stiffnessChange.SI");
+  if (insp.stiffness_change === 0) mark(ctx, "stiffnessChange.NO");
+
+  // --- 7. Peligro global · 8. Peligro por condiciones geotécnicas ---
+  markCatalogSingle(ctx, "totalCollapse", insp.total_collapse);
+  markCatalogSingle(ctx, "partialCollapse", insp.partial_collapse);
+  markCatalogSingle(ctx, "evidentTilt", insp.evident_tilt);
+  markCatalogSingle(ctx, "adjacentBuildingRisk", insp.adjacent_building_risk);
+  markCatalogSingle(ctx, "soilLiquefaction", insp.soil_liquefaction);
+  markCatalogSingle(ctx, "nearbyLandslides", insp.nearby_landslides);
+
+  // --- 9 y 10. Peligro por daño en elementos (estructurales + no estructurales) ---
+  const damagesByCode = new Map<string, string>();
+  for (const d of (insp.elementDamages as any[]) ?? []) damagesByCode.set(d.element_code, d.severity);
+  for (const code of SEVERITY_ELEMENT_CODES) {
+    const sev = damagesByCode.get(code);
+    if (sev) mark(ctx, `sev.${code}.${sev}`);
+  }
+  const otrosDamage = (insp.elementDamages as any[])?.find((d) => d.element_code === "OTROS");
+  if (otrosDamage?.other_label) fill(ctx, "nonStructOtherText", otrosDamage.other_label);
+
+  // --- 12. Clasificación de habitabilidad y del daño (repetición) + evaluación previa ---
+  markCatalogSingle(ctx, "habitability2", insp.habitability);
+  markCatalogSingle(ctx, "damageLevel2", insp.damage_level);
+  if (insp.previous_evaluation_exists === 1) mark(ctx, "previousEvaluationExists.SI");
+  if (insp.previous_evaluation_exists === 0) mark(ctx, "previousEvaluationExists.NO");
+  if (insp.previous_evaluation_exists) {
+    fill(ctx, "previousEvaluationType", insp.previous_evaluation_type);
+    fill(ctx, "previousEvaluationEntity", insp.previous_evaluation_entity);
+    fill(ctx, "previousEvaluationHabitability", insp.previous_evaluation_habitability);
+    fill(ctx, "previousEvaluationDate", insp.previous_evaluation_date);
   }
 
-  // =========================================================================
-  // 2. CLASIFICACIÓN DE HABITABILIDAD Y NIVEL DE DAÑO
-  // =========================================================================
-  {
-    const inspTypeLayout = layoutOptions(doc, [{ code: "EXTERIOR", label: "Exterior solamente" }, { code: "COMPLETA", label: "Completa" }], 220, singleSelection(insp.inspection_type), undefined);
-    const habLayout = layoutOptions(doc, HAB_OPTIONS, 260, singleSelection(insp.habitability), undefined);
-    const dmgLayout = layoutOptions(doc, DMG_OPTIONS, 260, singleSelection(insp.damage_level), undefined);
-    ensureSpace(doc, 14.5 + 3 + 10 + inspTypeLayout.height + 4 + 10 + habLayout.height + 4 + 10 + dmgLayout.height + 6);
-    let y = sectionHeader(doc, X, doc.y, W, "2. Clasificación de habitabilidad y nivel de daño");
-    y = groupLabel(doc, X, y, "Tipo de inspección:");
-    drawOptions(doc, X, y, inspTypeLayout);
-    y += inspTypeLayout.height + 4;
-    y = groupLabel(doc, X, y, "Habitabilidad:");
-    drawOptions(doc, X, y, habLayout);
-    y += habLayout.height + 4;
-    y = groupLabel(doc, X, y, "Nivel de daño:");
-    drawOptions(doc, X, y, dmgLayout);
-    y += dmgLayout.height + 4;
-    doc.y = y;
-    doc.x = X;
-  }
+  // --- 13. Ocupación de la edificación ---
+  if (insp.occupation_status === "OCUPADA") mark(ctx, "occupationStatus.OCUPADA");
+  if (insp.occupation_status === "DESOCUPADA") mark(ctx, "occupationStatus.DESOCUPADA");
 
-  // =========================================================================
-  // 3. INFORMACIÓN GENERAL
-  // =========================================================================
-  {
-    ensureSpace(doc, 14.5 + 3 + 27 + 4 + 24 + 6);
-    let y = sectionHeader(doc, X, doc.y, W, "3. Información general");
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Departamento", value: insp.department ?? "" },
-      { label: "Municipio", value: insp.municipality ?? "" },
-      { label: "Barrio / Vereda", value: insp.neighborhood ?? "" },
-      { label: "Zona", checkboxes: [{ code: "URBANO", label: "Urbano" }, { code: "RURAL", label: "Rural" }], checkboxSelected: singleSelection(insp.area_type), weight: 0.9 },
-    ]);
-    y += 4;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Longitud WGS84", value: insp.longitude != null ? String(insp.longitude) : "" },
-      { label: "Latitud WGS84", value: insp.latitude != null ? String(insp.latitude) : "" },
-    ]);
-    y += 4;
-    doc.y = y;
-    doc.x = X;
-  }
+  // --- 14. Recomendaciones y medidas de seguridad ---
+  markCatalogMulti(ctx, "reco", insp.safetyRecommendations, "recoOtherText");
 
-  // =========================================================================
-  // 4. IDENTIFICACIÓN DE LA EDIFICACIÓN
-  // =========================================================================
-  {
-    const useSel = multiSelection(insp.buildingUses);
-    const useLayout = layoutOptions(doc, BUILDING_USES.map((u) => ({ code: u.code, label: u.label })), W, useSel.set, useSel.other);
-    ensureSpace(doc, 14.5 + 3 + 24 * 2 + 8 + 10 + useLayout.height + 6);
-    let y = sectionHeader(doc, X, doc.y, W, "4. Identificación de la edificación");
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Dirección", value: insp.address ?? "", weight: 2 },
-      { label: "Nombre de la edificación", value: insp.building_name ?? "", weight: 2 },
-    ]);
-    y += 4;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Núm. pisos sobre el suelo", value: insp.floors_above_ground != null ? String(insp.floors_above_ground) : "" },
-      { label: "Núm. sótanos", value: insp.basements != null ? String(insp.basements) : "" },
-      { label: "Dimensiones aprox. frente x fondo (m)", value: insp.front_dimension != null ? `${insp.front_dimension} x ${insp.depth_dimension ?? "—"}` : "", weight: 1.6 },
-      { label: "Tipo", checkboxes: [{ code: "PUBLICA", label: "Pública" }, { code: "PRIVADA", label: "Privada" }], checkboxSelected: singleSelection(insp.building_ownership), weight: 1 },
-    ]);
-    y += 6;
-    y = groupLabel(doc, X, y, "Uso:");
-    drawOptions(doc, X, y, useLayout);
-    y += useLayout.height + 4;
-    doc.y = y;
-    doc.x = X;
-  }
+  // --- 15. Comentarios finales --- (el formulario impreso solo trae 4 líneas
+  // subrayadas sin casilla de texto delimitada; se usa la primera como ancla
+  // y se deja que pdf-lib recorte/reduzca tamaño vía drawFieldText — un
+  // comentario largo se trunca con "…", igual que cualquier otro campo).
+  // No hay coordenada de "comentarios" en el mapa (el original es multilínea
+  // libre, no una sola casilla) — se omite intencionalmente aquí; el detalle
+  // completo de comentarios queda en el informe rediseñado (`report.pdf`).
 
-  // =========================================================================
-  // 5. SISTEMA ESTRUCTURAL, ENTREPISO Y CUBIERTA
-  // =========================================================================
-  {
-    const s1 = multiSelection(insp.structuralSystems);
-    const s2 = multiSelection(insp.floorSystems);
-    const s3 = multiSelection(insp.roofSupportSystems);
-    const s4 = multiSelection(insp.roofTypes);
-    const groups: Array<[string, OptionsLayout]> = [
-      ["5.1 Sistema estructural:", layoutOptions(doc, STRUCTURAL_SYSTEMS.map((o) => ({ code: o.code, label: o.label })), W, s1.set, s1.other)],
-      ["5.2 Sistema de entrepiso:", layoutOptions(doc, FLOOR_SYSTEMS.map((o) => ({ code: o.code, label: o.label })), W, s2.set, s2.other)],
-      ["5.3 Sistema de soporte de la cubierta:", layoutOptions(doc, ROOF_SUPPORT_SYSTEMS.map((o) => ({ code: o.code, label: o.label })), W, s3.set, s3.other)],
-      ["5.4 Tipo de cubierta:", layoutOptions(doc, ROOF_TYPES.map((o) => ({ code: o.code, label: o.label })), W, s4.set, s4.other)],
-    ];
-    // Reserva encabezado + primer subgrupo juntos para que la barra de
-    // sección nunca quede huérfana al final de una página.
-    ensureSpace(doc, 14.5 + 3 + 10 + groups[0][1].height + 4);
-    let y = sectionHeader(doc, X, doc.y, W, "5. Sistema estructural, entrepiso y cubierta");
-    for (const [label, layout] of groups) {
-      doc.y = y;
-      doc.x = X;
-      ensureSpace(doc, 10 + layout.height + 4);
-      y = doc.y;
-      y = groupLabel(doc, X, y, label);
-      drawOptions(doc, X, y, layout);
-      y += layout.height + 4;
-    }
-    doc.y = y;
-    doc.x = X;
-  }
+  // --- 16. Información del evaluador ---
+  fill(ctx, "evaluatorName2", insp.evaluator_name);
+  fill(ctx, "evaluatorIdCode", insp.evaluator_id_code);
+  if (insp.evaluator_doc_type === "CC") mark(ctx, "evaluatorDocType.CC");
+  if (insp.evaluator_doc_type === "PASAPORTE") mark(ctx, "evaluatorDocType.PASAPORTE");
+  fill(ctx, "evaluatorDocNumber", insp.evaluator_doc_number);
+  fill(ctx, "evaluatorEntity", insp.evaluator_entity);
+  fill(ctx, "evaluatorDependencia", insp.evaluator_dependencia);
+  // Líneas de firma: el formulario impreso espera una firma manuscrita: no
+  // hay captura de firma digital en esta herramienta, así que se escribe el
+  // nombre correspondiente como mejor esfuerzo (más útil que dejarlo en
+  // blanco), igual convención que usa el resto de la industria de formularios
+  // diligenciados digitalmente sin firma electrónica real.
+  fill(ctx, "evaluatorSignatureLine", insp.evaluator_name);
+  fill(ctx, "responsibleOfficialSignatureLine", insp.responsible_official_name);
+  fill(ctx, "responsibleOfficialCc", insp.responsible_official_cc);
+  fill(ctx, "responsibleOfficialEntity", insp.responsible_official_entity);
 
-  // =========================================================================
-  // 6. CONDICIONES PREEXISTENTES Y DE ENTORNO
-  // =========================================================================
-  {
-    const morphOther = insp.site_morphology === "OTRO" ? insp.site_morphology_other : undefined;
-    const morphLayout = layoutOptions(doc, SITE_MORPHOLOGY.map((o) => ({ code: o.code, label: o.label })), W, singleSelection(insp.site_morphology), morphOther);
-    const isSismo = (insp.threatTypes ?? []).some((t: any) => t.code === "SISMO");
-    ensureSpace(doc, 14.5 + 3 + 10 + morphLayout.height + 4 + 27 + 4 + (isSismo ? 27 + 4 : 0) + 4);
-    let y = sectionHeader(doc, X, doc.y, W, "6. Condiciones preexistentes y condiciones de entorno");
-    y = groupLabel(doc, X, y, "6.1 Morfología del sitio:");
-    drawOptions(doc, X, y, morphLayout);
-    y += morphLayout.height + 4;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "6.2 ¿Amenaza por cuerpos hídricos?", checkboxes: YES_NO(), checkboxSelected: boolSelection(insp.water_body_threat), weight: 1 },
-      { label: "Distancia aprox. (m)", value: insp.water_body_distance != null ? String(insp.water_body_distance) : "", weight: 1 },
-      { label: "Observaciones", value: insp.water_body_notes ?? "", weight: 2 },
-    ]);
-    y += 4;
-    if (isSismo) {
-      y = fieldsRow(doc, X, y, W, [
-        { label: "6.3 ¿Piso débil?", checkboxes: YES_NO(), checkboxSelected: boolSelection(insp.weak_story) },
-        { label: "6.4 ¿Columna corta?", checkboxes: YES_NO(), checkboxSelected: boolSelection(insp.short_column) },
-        { label: "6.5 ¿Cambios drásticos de rigidez?", checkboxes: YES_NO(), checkboxSelected: boolSelection(insp.stiffness_change) },
-      ]);
-      y += 4;
-    }
-    doc.y = y;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 7. PELIGRO GLOBAL   ·   8. PELIGRO POR CONDICIONES GEOTÉCNICAS
-  // =========================================================================
-  {
-    const rows: Array<[string, SemOption[], Set<string>]> = [
-      ["Colapso total:", TRI_STATE("#ef4444"), singleSelection(insp.total_collapse)],
-      ["Colapso parcial:", TRI_STATE("#eab308"), singleSelection(insp.partial_collapse)],
-      ["Inclinación evidente:", TRI_STATE("#ef4444"), singleSelection(insp.evident_tilt)],
-      ["Riesgo por edificaciones adyacentes:", TRI_STATE("#eab308"), singleSelection(insp.adjacent_building_risk)],
-      ["Licuación / asentamiento / subsidencia del terreno:", YES_NO("#ef4444"), singleSelection(insp.soil_liquefaction)],
-      ["Movimientos en masa cercanos:", YES_NO("#ef4444"), singleSelection(insp.nearby_landslides)],
-    ];
-    const rowH = 11.5;
-    ensureSpace(doc, 14.5 + 3 + (rowH + 4) * rows.length + 4);
-    let y = sectionHeader(doc, X, doc.y, W, "7. Peligro global  ·  8. Peligro por condiciones geotécnicas");
-    for (const [label, options, selected] of rows) {
-      groupLabel(doc, X, y, label);
-      const layout = layoutOptions(doc, options, W - 200, selected, undefined, rowH, 16);
-      drawOptions(doc, X + 200, y, layout);
-      y += rowH + 4;
-    }
-    doc.y = y;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 9. PELIGRO POR DAÑO EN ELEMENTOS ESTRUCTURALES
-  // =========================================================================
-  {
-    ensureSpace(doc, 14.5 + 11 + 13);
-    doc.y = sectionHeader(doc, X, doc.y, W, "9. Peligro por daño en elementos estructurales", "N/L: Ninguno/Leve  ·  M: Moderado  ·  S: Severo");
-    doc.x = X;
-    const structDamages = (insp.elementDamages as any[]).filter((d) => d.category === "ESTRUCTURAL");
-    for (const code of ["COLUMNAS", "MUROS_PORTANTES", "VIGAS", "NODOS_CONEXION", "RIOSTRAS", "ENTREPISO"]) {
-      const def = getElementDef(code)!;
-      const found = structDamages.find((d) => d.element_code === code);
-      elementRow(doc, X, W, def.name, def.tier, found?.severity ?? null);
-    }
-    doc.y += 3;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 10. PELIGRO POR DAÑO EN ELEMENTOS NO ESTRUCTURALES
-  // =========================================================================
-  {
-    const codes = [
-      "MUROS_FACHADA_ANTEPECHOS", "MUROS_DIVISORIOS", "VENTANALES_VIDRIOS_FACHADA", "CIELO_RASO_LUMINARIAS",
-      "CUBIERTAS", "ESCALERAS", "ASCENSORES", "BALCONES", "TANQUES_ELEVADOS", "INSTALACIONES_GAS",
-      "INSTALACIONES_ELECTRICAS", "ACUEDUCTO_ALCANTARILLADO", "OTROS",
-    ];
-    ensureSpace(doc, 14.5 + 11 + 13);
-    doc.y = sectionHeader(doc, X, doc.y, W, "10. Peligro por daño en elementos no estructurales", "N/L: Ninguno/Leve  ·  M: Moderado  ·  S: Severo");
-    doc.x = X;
-    const nonStructDamages = (insp.elementDamages as any[]).filter((d) => d.category === "NO_ESTRUCTURAL");
-    for (const code of codes) {
-      const def = getElementDef(code)!;
-      const found = nonStructDamages.find((d) => d.element_code === code);
-      const name = code === "OTROS" && found?.other_label ? `Otros: ${found.other_label}` : def.name;
-      elementRow(doc, X, W, name, def.tier, found?.severity ?? null);
-    }
-    doc.y += 3;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 11. ESQUEMA — PLANTA Y ELEVACIÓN
-  // =========================================================================
-  {
-    const boxH = 130;
-    ensureSpace(doc, 14.5 + 3 + boxH + 6);
-    const y = sectionHeader(doc, X, doc.y, W, "11. Esquema", "Planta y elevación");
-    const boxW = (W - 10) / 2;
-    const plantaPhotos = (insp.photos as any[]).filter((p) => p.kind === "ESQUEMA_PLANTA");
-    const elevPhotos = (insp.photos as any[]).filter((p) => p.kind === "ESQUEMA_ELEVACION");
-    sketchBox(doc, X, y, boxW, boxH, "Planta", plantaPhotos[0] ? join(PUBLIC_DIR, plantaPhotos[0].url) : null);
-    sketchBox(doc, X + boxW + 10, y, boxW, boxH, "Elevación", elevPhotos[0] ? join(PUBLIC_DIR, elevPhotos[0].url) : null);
-    doc.y = y + boxH + 6;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 12. CLASIFICACIÓN DE HABITABILIDAD Y DEL DAÑO (repetición) + evaluación previa
-  // =========================================================================
-  {
-    const habLayout = layoutOptions(doc, HAB_OPTIONS, 260, singleSelection(insp.habitability), undefined);
-    const dmgLayout = layoutOptions(doc, DMG_OPTIONS, 260, singleSelection(insp.damage_level), undefined);
-    const hasPrev = !!insp.previous_evaluation_exists;
-    ensureSpace(doc, 14.5 + 11 + 10 + habLayout.height + 4 + 10 + dmgLayout.height + 4 + 27 + 4 + (hasPrev ? 24 + 4 : 0) + 4);
-    let y = sectionHeader(doc, X, doc.y, W, "12. Clasificación de habitabilidad y del daño", "Repite la clasificación de la sección 2 — no es un segundo estado.");
-    y = groupLabel(doc, X, y, "Habitabilidad:");
-    drawOptions(doc, X, y, habLayout);
-    y += habLayout.height + 4;
-    y = groupLabel(doc, X, y, "Nivel de daño:");
-    drawOptions(doc, X, y, dmgLayout);
-    y += dmgLayout.height + 4;
-    y = fieldsRow(doc, X, y, W, [{ label: "¿Existe evaluación previa?", checkboxes: YES_NO(), checkboxSelected: boolSelection(insp.previous_evaluation_exists) }]);
-    y += 4;
-    if (hasPrev) {
-      y = fieldsRow(doc, X, y, W, [
-        { label: "Tipo de evaluación", value: insp.previous_evaluation_type ?? "" },
-        { label: "Entidad", value: insp.previous_evaluation_entity ?? "" },
-        { label: "Clasificación previa", value: insp.previous_evaluation_habitability ? (HABITABILITY_META[insp.previous_evaluation_habitability]?.label ?? insp.previous_evaluation_habitability) : "" },
-        { label: "Fecha", value: insp.previous_evaluation_date ?? "" },
-      ]);
-      y += 4;
-    }
-    doc.y = y;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 13. OCUPACIÓN DE LA EDIFICACIÓN
-  // =========================================================================
-  {
-    const occLayout = layoutOptions(doc, [{ code: "OCUPADA", label: "Ocupada" }, { code: "DESOCUPADA", label: "Desocupada" }], 200, singleSelection(insp.occupation_status), undefined);
-    ensureSpace(doc, 14.5 + 3 + occLayout.height + 6);
-    const y = sectionHeader(doc, X, doc.y, W, "13. Ocupación de la edificación");
-    drawOptions(doc, X, y, occLayout);
-    doc.y = y + occLayout.height + 4;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 14. RECOMENDACIONES Y MEDIDAS DE SEGURIDAD
-  // =========================================================================
-  {
-    const recSel = multiSelection(insp.safetyRecommendations);
-    const recLayout = layoutOptions(doc, SAFETY_RECOMMENDATIONS.map((o) => ({ code: o.code, label: o.label })), W, recSel.set, recSel.other, 12.5);
-    ensureSpace(doc, 14.5 + 3 + recLayout.height + 6);
-    const y = sectionHeader(doc, X, doc.y, W, "14. Recomendaciones y medidas de seguridad");
-    drawOptions(doc, X, y, recLayout);
-    doc.y = y + recLayout.height + 4;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 15. COMENTARIOS FINALES
-  // =========================================================================
-  {
-    const boxH = 46;
-    ensureSpace(doc, 14.5 + 3 + boxH + 6);
-    const y = sectionHeader(doc, X, doc.y, W, "15. Comentarios finales");
-    doc.rect(X, y, W, boxH).lineWidth(0.6).strokeColor(BORDER).stroke();
-    doc.fontSize(8).font("Helvetica").fillColor(INK).text(insp.final_comments || "—", X + 5, y + 5, { width: W - 10, height: boxH - 10 });
-    doc.y = y + boxH + 6;
-    doc.x = X;
-  }
-
-  // =========================================================================
-  // 16. INFORMACIÓN DEL EVALUADOR
-  // =========================================================================
-  {
-    ensureSpace(doc, 14.5 + 3 + 24 + 4 + 27 + 4 + 24 + 6 + 10 + 24 + 4);
-    let y = sectionHeader(doc, X, doc.y, W, "16. Información del evaluador");
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Nombre", value: insp.evaluator_name ?? "", weight: 2 },
-      { label: "ID evaluador", value: insp.evaluator_id_code ?? "" },
-    ]);
-    y += 4;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Tipo de documento", checkboxes: [{ code: "CC", label: "C.C." }, { code: "PASAPORTE", label: "Pasaporte" }], checkboxSelected: singleSelection(insp.evaluator_doc_type) },
-      { label: "Núm. de documento", value: insp.evaluator_doc_number ?? "" },
-      { label: "Entidad", value: insp.evaluator_entity ?? "" },
-      { label: "Dependencia", value: insp.evaluator_dependencia ?? "" },
-    ]);
-    y += 4;
-    y = fieldsRow(doc, X, y, W, [{ label: "Firma", value: "" }]);
-    y += 8;
-    doc.fontSize(7.4).font("Helvetica-Bold").fillColor(INK).text("Funcionario responsable", X, y, { lineBreak: false });
-    y += 10;
-    y = fieldsRow(doc, X, y, W, [
-      { label: "Nombre", value: insp.responsible_official_name ?? "", weight: 2 },
-      { label: "C.C.", value: insp.responsible_official_cc ?? "" },
-      { label: "Entidad", value: insp.responsible_official_entity ?? "", weight: 1.5 },
-    ]);
-    doc.y = y + 4;
-    doc.x = X;
-  }
-
-  // --- Pie de página en todas las páginas ---
-  const range = doc.bufferedPageRange();
-  for (let i = 0; i < range.count; i++) {
-    doc.switchToPage(range.start + i);
-    addPageFooter(doc, insp.form_number, `Página ${i + 1} de ${range.count}`);
-  }
-
-  doc.end();
-  return doc;
+  return pdfDoc.save();
 }
