@@ -1,0 +1,29 @@
+{
+  "name": "formulario-danos-edificaciones",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Herramienta de Evaluación Rápida de Daños en Edificaciones — inspección de campo, registro fotográfico, clasificación de habitabilidad y generación automática de informes PDF, basada en el Formulario Regional para Evaluación Rápida de Daños en Edificaciones.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/server.ts",
+    "start": "node dist/server/server.js",
+    "build:css": "tailwindcss -i ./public/tailwind.input.css -o ./public/styles.css --minify",
+    "build": "npm run build:css && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "seed": "tsx src/db/seed.ts",
+    "seed:reset": "node -e \"require('fs').rmSync('data/edificaciones.sqlite',{force:true})\" && npm run seed",
+    "test": "tsx --test src/domain/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pdfkit": "^0.17.6",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "pdfkit": "^0.19.1"
+  }
+}

@@ -1,0 +1,350 @@
+// Modelo de datos objetivo (PostgreSQL) — espejado funcionalmente en
+// src/db/schema.sql (SQLite) para la demostración. Ver
+// docs/ANALISIS-Y-ARQUITECTURA.md §4 y docs/DESPLIEGUE.md para la ruta de
+// migración completa de SQLite a este esquema.
+//
+// Para usarlo: `npm install prisma @prisma/client`, configurar DATABASE_URL
+// (PostgreSQL) y correr `npx prisma migrate dev`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  INSPECTOR
+  ADMIN
+}
+
+enum InspectionStatus {
+  BORRADOR
+  EN_PROCESO
+  FINALIZADA
+  INFORME_GENERADO
+}
+
+enum YesNo {
+  SI
+  NO
+}
+
+enum TriState {
+  SI
+  NO
+  NO_ES_CLARO
+}
+
+enum HabitabilityColor {
+  VERDE
+  AMARILLO
+  ROJO
+}
+
+enum DamageLevel {
+  NINGUNO_MENOR
+  MODERADO
+  SEVERO
+}
+
+enum AreaType {
+  URBANO
+  RURAL
+}
+
+enum LocationSource {
+  GPS
+  MANUAL
+}
+
+enum BuildingOwnership {
+  PUBLICA
+  PRIVADA
+}
+
+enum OccupationStatus {
+  OCUPADA
+  DESOCUPADA
+}
+
+enum EvaluatorDocType {
+  CC
+  PASAPORTE
+}
+
+enum ElementCategory {
+  ESTRUCTURAL
+  NO_ESTRUCTURAL
+}
+
+enum ElementSeverity {
+  NL
+  M
+  S
+}
+
+enum PhotoKind {
+  PANORAMICA
+  DANIO
+  ESQUEMA_PLANTA
+  ESQUEMA_ELEVACION
+  FIRMA
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(INSPECTOR)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  inspections Inspection[]
+
+  @@map("users")
+}
+
+model Inspection {
+  id String @id @default(uuid())
+
+  status             InspectionStatus @default(BORRADOR)
+  inspectorUserId    String?          @map("inspector_user_id")
+  inspector          User?            @relation(fields: [inspectorUserId], references: [id])
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  finalizedAt        DateTime?        @map("finalized_at")
+  reportGeneratedAt  DateTime?        @map("report_generated_at")
+
+  // Sección 1
+  formNumber            String? @map("form_number")
+  zoneId                 String? @map("zone_id")
+  evaluatorName            String? @map("evaluator_name")
+  inspectionDate             String? @map("inspection_date")
+  inspectionTime               String? @map("inspection_time")
+  inspectionTimePeriod           String? @map("inspection_time_period")
+  groupId                          String? @map("group_id")
+  entity                             String?
+  contactPerson                       String? @map("contact_person")
+  contactPhone                         String? @map("contact_phone")
+
+  // Víctimas y afectación humana — extensión aditiva (ver ANALISIS-Y-ARQUITECTURA.md §3 A6)
+  numDeaths   Int?    @map("num_deaths")
+  numInjured    Int?    @map("num_injured")
+  numMissing      Int?    @map("num_missing")
+  numAffected        Int?    @map("num_affected")
+  victimsNotes          String? @map("victims_notes")
+
+  // Secciones 2/12 (campo único — ver ANALISIS-Y-ARQUITECTURA.md §3 A3)
+  inspectionType             String?            @map("inspection_type")
+  habitability                 HabitabilityColor?
+  damageLevel                    DamageLevel?      @map("damage_level")
+  habitabilitySuggested             HabitabilityColor? @map("habitability_suggested")
+  damageLevelSuggested                 DamageLevel?       @map("damage_level_suggested")
+  classificationOverridden               Boolean            @default(false) @map("classification_overridden")
+
+  previousEvaluationExists  Boolean?            @map("previous_evaluation_exists")
+  previousEvaluationType     String?            @map("previous_evaluation_type")
+  previousEvaluationEntity     String?            @map("previous_evaluation_entity")
+  previousEvaluationHabitability HabitabilityColor? @map("previous_evaluation_habitability")
+  previousEvaluationDate           String?            @map("previous_evaluation_date")
+
+  // Sección 3
+  department     String?
+  municipality    String?
+  neighborhood     String?
+  areaType          AreaType?       @map("area_type")
+  latitude           Float?
+  longitude            Float?
+  locationSource        LocationSource? @map("location_source")
+
+  // Sección 4
+  address              String?
+  buildingName          String?  @map("building_name")
+  floorsAboveGround      Int?     @map("floors_above_ground")
+  basements               Int?
+  buildingOwnership         BuildingOwnership? @map("building_ownership")
+  frontDimension              Float?             @map("front_dimension")
+  depthDimension                Float?             @map("depth_dimension")
+
+  // Sección 6
+  siteMorphology       String?  @map("site_morphology")
+  siteMorphologyOther    String?  @map("site_morphology_other")
+  waterBodyThreat          Boolean? @map("water_body_threat")
+  waterBodyDistance          Float?   @map("water_body_distance")
+  waterBodyNotes                String?  @map("water_body_notes")
+  weakStory                       Boolean? @map("weak_story")
+  shortColumn                        Boolean? @map("short_column")
+  stiffnessChange                       Boolean? @map("stiffness_change")
+
+  // Sección 7
+  totalCollapse         YesNo?    @map("total_collapse")
+  partialCollapse         TriState? @map("partial_collapse")
+  evidentTilt                YesNo?    @map("evident_tilt")
+  adjacentBuildingRisk          TriState? @map("adjacent_building_risk")
+
+  // Sección 8
+  soilLiquefaction  YesNo? @map("soil_liquefaction")
+  nearbyLandslides    YesNo? @map("nearby_landslides")
+
+  // Sección 13
+  occupationStatus OccupationStatus? @map("occupation_status")
+
+  // Sección 15
+  finalComments String? @map("final_comments")
+
+  // Sección 16
+  evaluatorIdCode             String?           @map("evaluator_id_code")
+  evaluatorDocType              EvaluatorDocType? @map("evaluator_doc_type")
+  evaluatorDocNumber              String?           @map("evaluator_doc_number")
+  evaluatorEntity                    String?           @map("evaluator_entity")
+  evaluatorDependencia                  String?           @map("evaluator_dependencia")
+  responsibleOfficialName                 String?           @map("responsible_official_name")
+  responsibleOfficialCc                     String?           @map("responsible_official_cc")
+  responsibleOfficialEntity                    String?           @map("responsible_official_entity")
+
+  threatTypes             InspectionThreatType[]
+  buildingUses              InspectionBuildingUse[]
+  structuralSystems           InspectionStructuralSystem[]
+  floorSystems                   InspectionFloorSystem[]
+  roofSupportSystems                InspectionRoofSupportSystem[]
+  roofTypes                            InspectionRoofType[]
+  safetyRecommendations                   InspectionSafetyRecommendation[]
+  elementDamages                             InspectionElementDamage[]
+  damageRecords                                 DamageRecord[]
+  photos                                          Photo[]
+
+  @@map("inspections")
+}
+
+model InspectionThreatType {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  threatCode    String     @map("threat_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_threat_types")
+}
+
+model InspectionBuildingUse {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  useCode       String     @map("use_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_building_uses")
+}
+
+model InspectionStructuralSystem {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  systemCode    String     @map("system_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_structural_systems")
+}
+
+model InspectionFloorSystem {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  systemCode    String     @map("system_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_floor_systems")
+}
+
+model InspectionRoofSupportSystem {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  systemCode    String     @map("system_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_roof_support_systems")
+}
+
+model InspectionRoofType {
+  id            String     @id @default(uuid())
+  inspectionId  String     @map("inspection_id")
+  inspection    Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  roofTypeCode  String     @map("roof_type_code")
+  otherText     String?    @map("other_text")
+
+  @@map("inspection_roof_types")
+}
+
+model InspectionSafetyRecommendation {
+  id                  String     @id @default(uuid())
+  inspectionId        String     @map("inspection_id")
+  inspection          Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  recommendationCode  String     @map("recommendation_code")
+  otherText           String?    @map("other_text")
+
+  @@map("inspection_safety_recommendations")
+}
+
+/// Secciones 9 y 10 — checklist oficial de severidad N/L·M·S por elemento.
+model InspectionElementDamage {
+  id            String           @id @default(uuid())
+  inspectionId  String           @map("inspection_id")
+  inspection    Inspection       @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  category      ElementCategory
+  elementCode   String           @map("element_code")
+  severity      ElementSeverity
+  otherLabel    String?          @map("other_label")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  damageRecords DamageRecord[]
+
+  @@unique([inspectionId, elementCode])
+  @@map("inspection_element_damages")
+}
+
+/// Extensión aditiva (ver ANALISIS-Y-ARQUITECTURA.md §3 A4): daño individual
+/// con foto/descripción, colgado de un elemento ya definido por el formulario.
+model DamageRecord {
+  id                String                    @id @default(uuid())
+  inspectionId      String                    @map("inspection_id")
+  inspection        Inspection                @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  elementDamageId   String?                   @map("element_damage_id")
+  elementDamage     InspectionElementDamage?  @relation(fields: [elementDamageId], references: [id], onDelete: SetNull)
+  elementLabel      String                    @map("element_label")
+  location          String?
+  damageType        String?                   @map("damage_type")
+  description       String?
+  severity          ElementSeverity?
+  extent            String?
+  recommendation    String?
+  notes             String?
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+
+  photos Photo[]
+
+  @@map("damage_records")
+}
+
+model Photo {
+  id              String        @id @default(uuid())
+  inspectionId    String        @map("inspection_id")
+  inspection      Inspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  damageRecordId  String?       @map("damage_record_id")
+  damageRecord    DamageRecord? @relation(fields: [damageRecordId], references: [id], onDelete: Cascade)
+  kind            PhotoKind     @default(PANORAMICA)
+  url             String
+  caption         String?
+  latitude        Float?
+  longitude       Float?
+  takenAt         DateTime?     @map("taken_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@map("photos")
+}

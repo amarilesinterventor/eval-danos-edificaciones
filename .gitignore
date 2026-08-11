@@ -1,0 +1,16 @@
+node_modules/
+dist/
+data/*.sqlite
+data/*.sqlite-journal
+public/uploads/*
+!public/uploads/.gitkeep
+public/styles.css
+*.log
+.env
+.DS_Store
+
+# PDFs de referencia usados solo para el análisis inicial (no los lee el
+# servidor en tiempo de ejecución) — se excluyen del repo público porque uno
+# es una publicación con derechos de autor de terceros (FOPAE-AIS) y el otro
+# pesa ~250KB sin aportar nada al funcionamiento de la app.
+/*.pdf
