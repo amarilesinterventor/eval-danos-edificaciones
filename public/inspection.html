@@ -120,8 +120,35 @@
 
 const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], damageRecords: [], photos: [], threatTypes: [], buildingUses: [], structuralSystems: [], floorSystems: [], roofSupportSystems: [], roofTypes: [], safetyRecommendations: [] });
 
+    const BLANK_CATALOG_STUB = () => ({
+      threatTypes: [], buildingUses: [], structuralSystems: [], floorSystems: [], roofSupportSystems: [],
+      roofTypes: [], siteMorphology: [], structuralElements: [], nonStructuralElements: [],
+      safetyRecommendations: [], habitabilityMeta: {}, damageLevelMeta: {},
+    });
+    /**
+     * Recarga catálogo + inspección. NUNCA debe lanzar: se llama desde varios
+     * sitios como `await loadAll()` sin su propio try/catch (goToStep, el
+     * click de severidad, etc.), y el paso siguiente de esas cadenas siempre
+     * es volver a dibujar la pantalla. Antes de esta corrección, la carga del
+     * catálogo no tenía manejo de error — si esa llamada fallaba (p.ej. una
+     * interrupción de red pasajera), la excepción se propagaba sin capturar,
+     * cortaba la cadena `guardar -> recargar -> redibujar` a la mitad, y la
+     * pantalla se quedaba mostrando el estado viejo sin ningún aviso (bug
+     * real detectado en campo: el dato sí llegaba a guardarse en el
+     * servidor, pero nada en la pantalla lo reflejaba). Ver
+     * docs/ANALISIS-Y-ARQUITECTURA.md para el detalle del diagnóstico.
+     */
     async function loadAll() {
-      catalog = await api("/catalog");
+      try {
+        catalog = await api("/catalog");
+      } catch (err) {
+        // El catálogo es una lista estática (tipos de amenaza, usos, etc.)
+        // que casi nunca cambia entre una carga y la siguiente — ante una
+        // falla puntual, es más seguro seguir con la última copia que sí
+        // cargó bien (o un catálogo vacío si nunca cargó ninguna) que dejar
+        // que el error interrumpa el resto de la función.
+        if (!catalog) catalog = BLANK_CATALOG_STUB();
+      }
       try {
         const res = await api(`/inspections/${inspectionId}`);
         inspection = res.inspection || BLANK_INSPECTION_STUB();

@@ -415,3 +415,52 @@ también del artículo WABIM citado en `wabim-bridges`) pidió los siguientes aj
   el Panel (`public/index.html`) con el QR, el enlace en texto (para quien no pueda escanear) y un botón
   de copiar — para que cualquier inspector que ya tenga la app abierta pueda mostrárselo a un colega y que
   este acceda desde su celular sin instalar nada ni crear cuenta.
+
+## 12. APK Android (Capacitor) y corrección de un bug real en `loadAll()`
+
+- **Motivación**: aun con la app instalada como PWA, el usuario reportó que en campo (tras un sismo, sin
+  señal estable) necesitaba algo que no dependiera de haber abierto la app al menos una vez con conexión.
+  Se evaluaron las opciones (reforzar el PWA, empaquetar con Capacitor, o reescritura nativa completa) y
+  se descartó la reescritura nativa por desperdiciar todo el trabajo ya construido sin necesidad real —
+  Capacitor reutiliza el 100% del código web sin tocarlo.
+- **Proyecto separado**: `D:\Claude\eval-danos-edificaciones-apk`, fuera del repositorio web, por pedido
+  explícito del usuario de no modificar la herramienta web. Un script (`scripts/sync-web-assets.mjs`) copia
+  `public/` hacia `www/` de ese proyecto (excluyendo `uploads/`, fotos reales de pruebas) e inyecta un
+  archivo nuevo (`native-shim.js`, solo existe ahí) como primer `<script>` de cada página. El APK empaqueta
+  ese `www/` completo — la app funciona sin ninguna conexión desde el primer arranque, no solo después de
+  una visita previa.
+- **CORS sin tocar el servidor**: dentro del APK, la página vive en un origen local (`https://localhost`,
+  servido por Capacitor) mientras la API sigue en `eval-danos-edificaciones.onrender.com` — un origen
+  distinto. `native-shim.js` completa las rutas relativas `/api/...`/`/uploads/...` con ese origen real, y
+  `capacitor.config.json` activa `plugins.CapacitorHttp.enabled`, que hace que Android enrute esas
+  peticiones a través de networking **nativo** en vez del `fetch` del WebView — confirmado leyendo el
+  código fuente de Capacitor (`Bridge.java`/`native-bridge.js`): las peticiones al propio origen local
+  siguen sirviéndose sin cambios; solo las de otro origen se enrutan de forma nativa, evitando el bloqueo
+  de CORS del navegador sin necesitar ninguna cabecera nueva en el servidor.
+- **Compilación**: el entorno donde se generó el proyecto no tenía Android Studio ni un JDK compatible
+  (solo Java 8) — se instalaron Android Studio y JDK 21 (Microsoft Build of OpenJDK) vía `winget`, con
+  autorización del usuario. Detalle documentado en el README del proyecto APK: Gradle 8.14.3 exige JDK 21
+  para compilar (`capacitor-android` compila contra "release 21"), y un demonio de Gradle que queda vivo de
+  un intento anterior puede quedar con una resolución DNS en caché, causando errores confusos de "Unknown
+  host" incluso con la red funcionando bien — se resuelve con `gradlew --stop` antes de cada build (ya
+  automatizado en `scripts/build-apk.mjs`).
+- **Bug real encontrado y corregido en `inspection.html`** (con autorización explícita del usuario para
+  tocar el repo web, dado que es un bug genuino compartido con la web, no algo introducido por el
+  empaquetado): `loadAll()` no tenía manejo de error alrededor de `catalog = await api("/catalog")` — a
+  diferencia de la carga de la inspección, que sí lo tenía. Diagnosticado en campo con evidencia de log
+  (`adb logcat` conectado al dispositivo real): una casilla de severidad se guardaba correctamente en el
+  servidor (confirmado con la respuesta HTTP 200 de la API), pero el redibujado posterior mostraba datos
+  viejos — con solo ~20ms entre la respuesta del guardado y el redibujado, tiempo insuficiente para que
+  `loadAll()` hubiera completado sus dos llamadas de red reales, lo que apuntaba a que esa función fallaba
+  y terminaba casi de inmediato. Como `goToStep()` y el manejador de clic de severidad llaman
+  `await loadAll()` sin su propio try/catch, una falla ahí interrumpía en silencio la cadena
+  guardar→recargar→redibujar, sin ningún aviso visible — explicando a la vez los tres síntomas reportados
+  (severidad no se veía marcada, botón "+ Detalle con foto" no aparecía, fotos no se veían reflejadas: los
+  tres dependen de ese mismo redibujado). Corrección: se envolvió también la carga del catálogo en su
+  propio try/catch, con un `BLANK_CATALOG_STUB()` de respaldo (o la última copia buena, si ya había una) —
+  `loadAll()` ahora nunca lanza, protegiendo los 7 sitios que la llaman sin manejo de error propio. Bump de
+  `CACHE_VERSION` a `v9` en `public/sw.js` para que la PWA web también reciba la corrección.
+  - Se descartaron dos hipótesis previas antes de encontrar esta: una caché de lecturas en `native-shim.js`
+    que podía servir datos viejos (se quitó por peligrosa, aunque no era la causa raíz de este caso
+    puntual) y un problema de repintado del WebView (se probó forzar reflow/composición tras cada
+    redibujado — no tuvo efecto, confirmando que el problema era de datos, no de pintura).
