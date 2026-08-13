@@ -225,7 +225,7 @@ function severityRow(doc: Doc, name: string, tier: "CRITICO" | "SECUNDARIO", sev
   doc.x = PAGE_MARGIN;
 }
 
-function photoThumbRow(doc: Doc, photos: any[] | undefined, thumbSize = 130) {
+function photoThumbRow(doc: Doc, photos: any[] | undefined, thumbSize = 170) {
   if (!photos || !photos.length) return;
   const gap = 12;
   const perRow = Math.max(1, Math.floor((CONTENT_WIDTH + gap) / (thumbSize + gap)));
@@ -482,11 +482,11 @@ export function buildInspectionReportPdf(inspectionId: string): Doc {
     sectionBanner(doc, "11. Esquema — Planta y elevación");
     if (plantaPhotos.length) {
       doc.fontSize(8.5).fillColor("#64748b").text("Planta", PAGE_MARGIN, doc.y, { width: CONTENT_WIDTH });
-      photoThumbRow(doc, plantaPhotos, 200);
+      photoThumbRow(doc, plantaPhotos, 230);
     }
     if (elevacionPhotos.length) {
       doc.fontSize(8.5).fillColor("#64748b").text("Elevación", PAGE_MARGIN, doc.y, { width: CONTENT_WIDTH });
-      photoThumbRow(doc, elevacionPhotos, 200);
+      photoThumbRow(doc, elevacionPhotos, 230);
     }
   }
 
