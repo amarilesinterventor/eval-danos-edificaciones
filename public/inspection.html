@@ -500,7 +500,7 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
       const dmg = currentDamageFor(def.code);
       const severity = dmg?.severity ?? null;
       const hasDamageRecords = (inspection.damageRecords || []).filter((dr) => dr.element_damage_id === dmg?.id);
-      const showDetail = severity === "M" || severity === "S";
+      const showDetail = severity === "NL" || severity === "M" || severity === "S"; // cualquier severidad ya marcada permite registrar detalle con foto (antes solo M/S)
       const hasGuide = !!(window.PATHOLOGY_GUIDE?.[def.code] || window.NON_STRUCTURAL_FAILURE_MODES?.[def.code]);
       return `
         <div class="border-b border-slate-100 last:border-b-0 py-3">

@@ -5,7 +5,7 @@
 // arriesgar mostrar datos desactualizados cuando sí hay conexión. Las
 // escrituras (POST/PUT/PATCH/DELETE) NO pasan por aquí — las maneja la cola
 // de sincronización en IndexedDB (ver public/offline.js).
-const CACHE_VERSION = "v9"; // v9: corrige loadAll() sin manejo de error (podía dejar la pantalla del wizard sin actualizarse tras guardar)
+const CACHE_VERSION = "v10"; // v10: paso 5 — "+ Detalle con foto" ahora también disponible con severidad N/L, no solo M/S
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
