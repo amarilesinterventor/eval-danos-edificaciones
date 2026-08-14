@@ -1269,7 +1269,10 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
       .catch((err) => {
         // Última red de seguridad: si algo falla incluso antes de tener un
         // catálogo/inspección utilizable (p.ej. /api/catalog caído), no dejar
-        // la página en blanco sin explicación.
+        // la página en blanco sin explicación. Se registra la traza completa
+        // (no solo err.message, que es lo único que se ve en pantalla) para
+        // poder diagnosticar por adb logcat sin tener que reproducir a ciegas.
+        console.error("[bootstrap] loadAll()/render inicial falló:", err && err.stack ? err.stack : err);
         document.getElementById("stepContent").innerHTML = `
           <div class="card p-6 text-center">
             <p class="text-sm text-red-600 mb-3">No se pudo cargar la inspección: ${escapeHtml(err.message)}</p>
