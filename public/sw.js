@@ -5,7 +5,7 @@
 // arriesgar mostrar datos desactualizados cuando sí hay conexión. Las
 // escrituras (POST/PUT/PATCH/DELETE) NO pasan por aquí — las maneja la cola
 // de sincronización en IndexedDB (ver public/offline.js).
-const CACHE_VERSION = "v18"; // v18: registrar traza completa si falla la carga inicial (diagnóstico)
+const CACHE_VERSION = "v19"; // v19: blindaje defensivo contra "options is not iterable" en checkboxGroup/chipRadio/selectWithOther
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
