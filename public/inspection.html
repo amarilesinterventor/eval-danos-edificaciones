@@ -127,6 +127,43 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
       roofTypes: [], siteMorphology: [], structuralElements: [], nonStructuralElements: [],
       safetyRecommendations: [], habitabilityMeta: {}, damageLevelMeta: {},
     });
+    // Respaldo local ante falla de red real (sin conexión, no solo un error
+    // HTTP puntual) para las dos lecturas de loadAll():
+    //  - Catálogo: es una lista estática (tipos de amenaza, usos, elementos
+    //    estructurales, etc.) que no depende de la inspección ni cambia entre
+    //    cargas. `/catalog-offline.json` es un archivo estático (NO pasa por
+    //    /api/, así que dentro del APK no se reescribe hacia el backend
+    //    remoto) que solo existe en el empaque nativo -- ver
+    //    eval-danos-edificaciones-apk/scripts/gen-catalog-offline.mjs, que lo
+    //    genera a partir de la MISMA función `getFullCatalog()` del servidor
+    //    para que nunca quede desincronizado. En la web normal este archivo
+    //    no existe (404) y simplemente se sigue de largo hacia el catálogo
+    //    vacío, como antes -- ahí ya la cubre el Service Worker.
+    //  - Inspección: se guarda en localStorage una copia de la última carga
+    //    que sí tuvo éxito, para poder seguir trabajando (aunque sea con
+    //    datos ya desactualizados) si una sesión de campo se queda sin señal
+    //    después de haber abierto la inspección al menos una vez.
+    async function fetchOfflineCatalog() {
+      const res = await fetch("/catalog-offline.json", { cache: "no-store" });
+      if (!res.ok) throw new Error("sin catálogo local embebido");
+      return res.json();
+    }
+    const INSPECTION_CACHE_KEY = (id) => `edificaciones_inspection_cache_${id}`;
+    function cacheInspectionLocally(insp) {
+      try {
+        localStorage.setItem(INSPECTION_CACHE_KEY(insp.id), JSON.stringify(insp));
+      } catch (err) {
+        // localStorage lleno o no disponible: no es crítico, solo se pierde el respaldo offline.
+      }
+    }
+    function readLocalInspectionCache(id) {
+      try {
+        const raw = localStorage.getItem(INSPECTION_CACHE_KEY(id));
+        return raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        return null;
+      }
+    }
     /**
      * Recarga catálogo + inspección. NUNCA debe lanzar: se llama desde varios
      * sitios como `await loadAll()` sin su propio try/catch (goToStep, el
@@ -139,21 +176,33 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
      * real detectado en campo: el dato sí llegaba a guardarse en el
      * servidor, pero nada en la pantalla lo reflejaba). Ver
      * docs/ANALISIS-Y-ARQUITECTURA.md para el detalle del diagnóstico.
+     *
+     * Segunda vuelta de este mismo bug, también detectada en campo: sin
+     * conexión de verdad (no solo un error puntual), el catálogo y la
+     * inspección caían al stub vacío -- lo que evitaba el cuelgue silencioso,
+     * pero dejaba el wizard inutilizable (sin opciones que elegir, sin los
+     * datos ya cargados de la inspección). Los respaldos locales de abajo
+     * resuelven eso.
      */
     async function loadAll() {
       try {
         catalog = await api("/catalog");
       } catch (err) {
-        // El catálogo es una lista estática (tipos de amenaza, usos, etc.)
-        // que casi nunca cambia entre una carga y la siguiente — ante una
-        // falla puntual, es más seguro seguir con la última copia que sí
-        // cargó bien (o un catálogo vacío si nunca cargó ninguna) que dejar
-        // que el error interrumpa el resto de la función.
-        if (!catalog) catalog = BLANK_CATALOG_STUB();
+        try {
+          catalog = await fetchOfflineCatalog();
+        } catch (err2) {
+          // El catálogo es una lista estática (tipos de amenaza, usos, etc.)
+          // que casi nunca cambia entre una carga y la siguiente — ante una
+          // falla puntual, es más seguro seguir con la última copia que sí
+          // cargó bien (o un catálogo vacío si nunca cargó ninguna) que dejar
+          // que el error interrumpa el resto de la función.
+          if (!catalog) catalog = BLANK_CATALOG_STUB();
+        }
       }
       try {
         const res = await api(`/inspections/${inspectionId}`);
         inspection = res.inspection || BLANK_INSPECTION_STUB();
+        cacheInspectionLocally(inspection);
       } catch (err) {
         // `api()` lanza en cualquier respuesta no-OK, incluyendo 404 — que es
         // exactamente lo que devuelve el servidor tanto si la inspección se
@@ -161,7 +210,10 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
         // como si el registro fue eliminado de verdad. No podemos distinguir
         // los dos casos desde el cliente; se opta por el fallback tolerante
         // (permitir seguir trabajando) en vez de dejar la página en blanco.
-        inspection = BLANK_INSPECTION_STUB();
+        // Antes de rendirse a un stub vacío, se intenta la última copia
+        // conocida en este dispositivo, para no perder de vista el trabajo
+        // ya hecho en una inspección que sí se alcanzó a abrir antes.
+        inspection = readLocalInspectionCache(inspectionId) || BLANK_INSPECTION_STUB();
       }
     }
 
