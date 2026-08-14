@@ -92,6 +92,7 @@ export const ROOF_TYPES: CatalogOption[] = [
   { code: "TEJA_FIBROCEMENTO", label: "Teja de fibrocemento" },
   { code: "TEJA_PLASTICA", label: "Teja plástica" },
   { code: "PLASTICO_PAJA", label: "Plástico-paja" },
+  { code: "STANDING_SEAM", label: "Standing Seam" },
   { code: "OTRO", label: "Otro", allowOther: true },
 ];
 
