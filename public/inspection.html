@@ -165,6 +165,94 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
       }
     }
     /**
+     * Actualización optimista: cuando `api()` encola una escritura sin
+     * conexión (`{queued:true}`, ver app.js/offline.js), el cambio SÍ quedó
+     * guardado para sincronizar más tarde, pero el `loadAll()` que sigue no
+     * tiene forma de verlo (vuelve a intentar el GET, que también falla, y
+     * cae al respaldo local -- que todavía no incluye este cambio). Sin
+     * esto, la pantalla parecía ignorar el clic aunque el dato sí quedara en
+     * cola (bug real detectado en campo: "no guarda los registros"). Se
+     * aplica el cambio directamente sobre `inspection` en memoria y se
+     * vuelve a cachear de inmediato, para que si `loadAll()` falla y cae al
+     * respaldo, recupere exactamente esta versión ya actualizada.
+     */
+    function applyElementDamageLocally(code, category, severity) {
+      if (!inspection) return;
+      const list = inspection.elementDamages || (inspection.elementDamages = []);
+      const existing = list.find((d) => d.element_code === code);
+      const now = new Date().toISOString();
+      if (existing) {
+        existing.category = category;
+        existing.severity = severity;
+        existing.updated_at = now;
+      } else {
+        list.push({ id: window.newClientId ? window.newClientId() : `local-${code}-${now}`, inspection_id: inspectionId, element_code: code, category, severity, other_label: null, created_at: now, updated_at: now });
+      }
+      cacheInspectionLocally(inspection);
+    }
+    /** Mismo respaldo optimista que `applyElementDamageLocally`, para el modal de detalle de daño (paso 5). */
+    function applyDamageRecordLocally(recordId, payload) {
+      if (!inspection || !recordId) return;
+      const list = inspection.damageRecords || (inspection.damageRecords = []);
+      const now = new Date().toISOString();
+      const idx = list.findIndex((d) => d.id === recordId);
+      const prev = idx >= 0 ? list[idx] : null;
+      const merged = {
+        id: recordId,
+        inspection_id: inspectionId,
+        element_damage_id: payload.elementDamageId ?? prev?.element_damage_id ?? null,
+        element_label: payload.elementLabel ?? prev?.element_label ?? "",
+        location: payload.location ?? prev?.location ?? "",
+        damage_type: payload.damageType ?? prev?.damage_type ?? "",
+        description: payload.description ?? prev?.description ?? "",
+        extent: payload.extent ?? prev?.extent ?? "",
+        recommendation: payload.recommendation ?? prev?.recommendation ?? "",
+        photos: prev?.photos ?? [],
+        created_at: prev?.created_at ?? now,
+        updated_at: now,
+      };
+      if (idx >= 0) list[idx] = merged;
+      else list.push(merged);
+      cacheInspectionLocally(inspection);
+    }
+    /**
+     * Foto subida sin conexión: `uploadPhoto()` (app.js) la encola igual que
+     * cualquier otra escritura (ver api()/offline.js), pero al quedar
+     * encolada no hay ninguna URL real todavía (el servidor es quien la
+     * genera al guardar el archivo). Se agrega una vista previa local (URL
+     * de blob, propia de esta pestaña) para que la foto se vea reflejada de
+     * inmediato -- antes, quedaba fuera de la pantalla hasta sincronizar
+     * (bug real detectado en campo: "no refleja las fotos tomadas"). Esta
+     * vista previa NO se guarda en el respaldo de localStorage (un blob:
+     * URL no sobrevive un recargue de página) -- dura mientras la pestaña
+     * siga abierta; al sincronizar de verdad, `loadAll()` trae la URL real.
+     */
+    function applyQueuedPhotoLocally(file, { kind, damageRecordId = null }) {
+      if (!inspection) return;
+      const now = new Date().toISOString();
+      const photo = {
+        id: window.newClientId ? window.newClientId() : `local-photo-${now}`,
+        inspection_id: inspectionId,
+        damage_record_id: damageRecordId,
+        kind,
+        url: URL.createObjectURL(file),
+        caption: null,
+        latitude: null,
+        longitude: null,
+        taken_at: now,
+        created_at: now,
+      };
+      inspection.photos = inspection.photos || [];
+      inspection.photos.push(photo);
+      if (damageRecordId) {
+        const dr = (inspection.damageRecords || []).find((d) => d.id === damageRecordId);
+        if (dr) {
+          dr.photos = dr.photos || [];
+          dr.photos.push(photo);
+        }
+      }
+    }
+    /**
      * Recarga catálogo + inspección. NUNCA debe lanzar: se llama desde varios
      * sitios como `await loadAll()` sin su propio try/catch (goToStep, el
      * click de severidad, etc.), y el paso siguiente de esas cadenas siempre
@@ -610,11 +698,13 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
           const code = btn.dataset.elementCode;
           const severity = btn.dataset.severity;
           const isStructural = structural.some((s) => s.code === code);
+          const category = isStructural ? "ESTRUCTURAL" : "NO_ESTRUCTURAL";
           setSaveStatus("Guardando…");
           await api(`/inspections/${inspectionId}/element-damages/${code}`, {
             method: "PUT",
-            body: JSON.stringify({ category: isStructural ? "ESTRUCTURAL" : "NO_ESTRUCTURAL", severity }),
+            body: JSON.stringify({ category, severity }),
           });
+          applyElementDamageLocally(code, category, severity);
           await loadAll();
           renderStep5(container);
           setSaveStatus("Guardado");
@@ -847,9 +937,11 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
           record = (await api(`/inspections/${inspectionId}/damage-records`, { method: "POST", body: JSON.stringify(payload) })).damageRecord;
           damageModalCtx.damageRecordId = record?.id || payload.id;
         }
+        applyDamageRecordLocally(damageModalCtx.damageRecordId, payload);
         // Subir todas las fotos pendientes ahora que el registro ya existe.
         for (const file of damageModalPendingPhotos) {
-          await uploadPhoto(inspectionId, file, { kind: "DANIO", damageRecordId: damageModalCtx.damageRecordId });
+          const photoRes = await uploadPhoto(inspectionId, file, { kind: "DANIO", damageRecordId: damageModalCtx.damageRecordId });
+          if (photoRes?.queued) applyQueuedPhotoLocally(file, { kind: "DANIO", damageRecordId: damageModalCtx.damageRecordId });
         }
         damageModalPendingPhotos = [];
         await loadAll();
@@ -930,7 +1022,9 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
         input.addEventListener("change", async (e) => {
           const file = e.target.files[0];
           if (!file) return;
-          await uploadPhoto(inspectionId, file, { kind: input.dataset.sketch === "PLANTA" ? "ESQUEMA_PLANTA" : "ESQUEMA_ELEVACION" });
+          const kind = input.dataset.sketch === "PLANTA" ? "ESQUEMA_PLANTA" : "ESQUEMA_ELEVACION";
+          const photoRes = await uploadPhoto(inspectionId, file, { kind });
+          if (photoRes?.queued) applyQueuedPhotoLocally(file, { kind });
           await loadAll();
           renderStep6(container);
         }),
