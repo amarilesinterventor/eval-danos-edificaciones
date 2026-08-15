@@ -324,16 +324,19 @@ const BLANK_INSPECTION_STUB = () => ({ id: inspectionId, elementDamages: [], dam
       const dataUrl = await resizeImageToDataUrl(file);
       const id = window.newClientId ? window.newClientId() : `local-photo-${now}`;
       // Bytes de la foto -> IndexedDB (ver photo-blob-store.js/nota arriba).
-      // Si esto llega a fallar (dispositivo con IndexedDB deshabilitado o
-      // sin cuota disponible ahí tampoco), se sigue de largo igual: el
-      // dataURL queda en el objeto `photo` en memoria de todos modos, así
-      // que la foto se ve bien en esta sesión -- solo se arriesga no
-      // sobrevivir un cierre completo de la app, en vez de romper el guardado.
+      // Si esto llega a fallar (caso raro: el dispositivo se quedó sin
+      // espacio de almacenamiento libre, o tiene IndexedDB deshabilitado),
+      // se sigue de largo igual -- el dataURL queda en el objeto `photo` en
+      // memoria de todos modos, así que la foto se ve y se puede usar en
+      // esta misma sesión (incluido el informe) -- pero SÍ se avisa de forma
+      // visible en vez de fallar en silencio otra vez: esa foto puntual
+      // arriesga no sobrevivir a que se cierre la app.
       if (window.photoBlobStore) {
         try {
           await window.photoBlobStore.put(id, dataUrl);
         } catch (err) {
           console.error("[applyQueuedPhotoLocally] no se pudo guardar la foto en IndexedDB:", err);
+          alert("Esta foto se ve bien por ahora, pero no se pudo guardar de forma permanente (posiblemente el celular se quedó sin espacio de almacenamiento libre). Si cierras la app antes de generar el informe, es posible que se pierda. Revisa el espacio disponible en el dispositivo.");
         }
       }
       const photo = {
