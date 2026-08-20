@@ -1,19 +1,21 @@
 # Blueprint de despliegue para Render (render.com).
 #
-# Nivel "free": sin disco persistente, así que la base de datos SQLite y las
-# fotos subidas se reinician en cada redeploy/reinicio del servicio. El
-# servidor detecta esto y vuelve a cargar los datos de ejemplo automáticamente
-# (ver autoSeedIfEmpty en src/server/server.ts), así que la app siempre
-# arranca funcional aunque los datos no persistan entre reinicios.
+# Plan "starter" + dos discos persistentes: la base de datos SQLite
+# (data/edificaciones.sqlite) y las fotos subidas (public/uploads/) ya NO se
+# reinician en cada redeploy/reinicio del servicio -- antes (plan "free",
+# sin disco) sí se reiniciaban, y el servidor recargaba datos de ejemplo
+# automáticamente (`autoSeedIfEmpty` en src/server/server.ts) para seguir
+# funcional aunque los datos no persistieran. Esa función de auto-siembra
+# sigue activa como red de seguridad (arranque en limpio, base de datos
+# corrupta, etc.), pero ya no debería activarse en el uso normal.
 #
-# Para tener persistencia real (inspecciones y fotos que no se borren), hay
-# que pasar a un plan pago y agregar un disco — ver el bloque comentado al
-# final. Ver también docs/DESPLIEGUE.md para instrucciones completas.
+# Ver docs/DESPLIEGUE.md para instrucciones completas / alternativas
+# (PostgreSQL, almacenamiento en la nube para fotos).
 services:
   - type: web
     name: eval-danos-edificaciones
     runtime: node
-    plan: free
+    plan: starter
     region: oregon
     buildCommand: npm install && npm run build
     startCommand: npm start
@@ -28,17 +30,14 @@ services:
       # multi-inspector/administrador (src/server/auth.ts ya está listo):
       # - key: AUTH_SECRET
       #   generateValue: true
-
-# --- Para agregar persistencia (plan pago, ~$7/mes + disco) ---
-# services:
-#   - type: web
-#     ...
-#     plan: starter
-#     disk:
-#       name: eval-danos-data
-#       mountPath: /opt/render/project/src/data
-#       sizeGB: 1
-# Nota: con esta configuración, /opt/render/project/src/public/uploads
-# también debería apuntar a un disco persistente (o a almacenamiento externo
-# tipo S3) para que las fotografías sobrevivan a los redeploys — ver
-# docs/DESPLIEGUE.md, sección "Almacenamiento de fotografías en producción".
+    # Dos discos independientes -- cada uno con su propio punto de montaje
+    # exacto, igual a la ruta que el código ya usa (src/db/db.ts: DATA_DIR;
+    # src/server/server.ts: UPLOADS_DIR), así que no hace falta tocar código
+    # ni variables de entorno adicionales para que esto funcione.
+    disks:
+      - name: eval-danos-data
+        mountPath: /opt/render/project/src/data
+        sizeGB: 1
+      - name: eval-danos-uploads
+        mountPath: /opt/render/project/src/public/uploads
+        sizeGB: 1

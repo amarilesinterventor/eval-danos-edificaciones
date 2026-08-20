@@ -65,19 +65,30 @@ Ejecuta, en orden: compilación de Tailwind CSS (`public/styles.css`, minificado
 TypeScript (`dist/`), y copia de `src/db/schema.sql` a `dist/db/schema.sql` (no lo procesa `tsc` por ser
 SQL crudo).
 
-## 6. Deploy en Render (nivel gratis, listo para usar)
+## 6. Deploy en Render (plan "starter" + disco persistente, listo para usar)
 
 El proyecto incluye [`render.yaml`](../render.yaml):
 
 1. Sube el proyecto a un repositorio Git (GitHub/GitLab).
 2. En [render.com](https://render.com): "New" → "Blueprint" → conecta el repositorio.
-3. Render detecta `render.yaml`, crea el servicio (plan Free) y genera `AUTH_SECRET` automáticamente.
+3. Render detecta `render.yaml` y crea el servicio (plan "starter", ~$7/mes, con dos discos persistentes
+   de 1GB cada uno: base de datos y fotos subidas).
 4. Espera el build (2-3 min) y abre la URL asignada (`https://<nombre>.onrender.com`).
 
-**Importante**: en el plan Free, la base de datos y las fotos se reinician en cada redeploy/inactividad
-prolongada — la app se auto-siembra para seguir siendo funcional, pero cualquier inspección real que
-hayas capturado se perderá. Para persistencia real, pasa a un plan pago con disco (bloque comentado al
-final de `render.yaml`) o migra a PostgreSQL + almacenamiento en la nube (secciones 3 y 4 arriba).
+Con esta configuración la base de datos y las fotos **sí persisten** entre redeploys/reinicios — no hace
+falta ninguna migración manual a PostgreSQL ni a almacenamiento en la nube para tener persistencia real
+(aunque siguen siendo alternativas válidas si el proyecto crece a múltiples instancias, ver secciones 3 y
+4 arriba).
+
+**Si prefieres el plan gratuito** (sin costo, pero sin persistencia real): cambia `plan: starter` a
+`plan: free` y quita el bloque `disks:` en `render.yaml` antes de desplegar — la base de datos y las
+fotos se reiniciarán en cada redeploy/inactividad prolongada, y la app se auto-siembra con datos de
+ejemplo para seguir funcional (`autoSeedIfEmpty`), pero cualquier inspección real capturada se perderá.
+
+**Cuidado con los límites de uso del plan gratuito**: la cuenta puede quedar suspendida por Render al
+superar el uso incluido (horas de cómputo, transferencia de datos) del nivel gratuito — si eso pasa, el
+servicio deja de responder por completo (ni siquiera muestra un error de la app, sino un aviso de Render)
+hasta reactivarlo o pasar a un plan pago.
 
 ### Alternativas de hosting
 
