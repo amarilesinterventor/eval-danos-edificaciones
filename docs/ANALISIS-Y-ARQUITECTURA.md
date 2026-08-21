@@ -464,3 +464,39 @@ también del artículo WABIM citado en `wabim-bridges`) pidió los siguientes aj
     que podía servir datos viejos (se quitó por peligrosa, aunque no era la causa raíz de este caso
     puntual) y un problema de repintado del WebView (se probó forzar reflow/composición tras cada
     redibujado — no tuvo efecto, confirmando que el problema era de datos, no de pintura).
+
+## 13. Firmas digitales (evaluador + propietario/ocupante), en las tres variantes
+
+- **Petición**: captura de firma con el dedo en pantalla, para el evaluador y para la persona de la
+  vivienda presente en la inspección, reflejada en el informe PDF narrativo y en el formato oficial —
+  en la app web, el APK original y el APK local-first por igual.
+- **Captura**: `public/inspection.html`, paso 8 — dos `<canvas>` con `initSignaturePad()` (Pointer Events,
+  unifica dedo/mouse/lápiz en un solo set de listeners; `devicePixelRatio` en la resolución del lienzo
+  para que el trazo no salga borroso en celulares de alta densidad). Se guarda como dataURL PNG
+  (`canvas.toDataURL("image/png")`) en `inspections.inspector_signature`/`occupant_signature` (columnas
+  nuevas, TEXT) a través del mismo mecanismo de PATCH que cualquier otro campo del wizard — sin endpoint
+  nuevo. Solo se incluye en el guardado si el usuario tocó ese lienzo en la visita actual (dibujó o lo
+  borró a propósito, ver flag `dirty`), para no pisar una firma ya guardada al pasar por el paso sin
+  volver a firmar.
+- **Migración de esquema**: hasta ahora el nivel gratis de Render no tenía disco persistente, así que
+  nunca hizo falta migrar una base de datos ya existente (`CREATE TABLE IF NOT EXISTS` bastaba). Con disco
+  persistente ya en uso (ver `render.yaml`), se agregó `ensureColumn()` en `src/db/db.ts` — migración
+  aditiva mínima vía `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`, idempotente, para no perder datos de
+  una base ya existente al agregar estas dos columnas.
+- **Informe narrativo** (`reportPdf.ts` server/pdfkit y `report-generator.js` cliente/pdf-lib, APK
+  local-first): sección "Firmas" nueva, entre "16. Información del evaluador" y "Créditos" — dos recuadros
+  lado a lado con la imagen incrustada (decodificada del dataURL) o "No firmado" si falta.
+- **Formato oficial** (`reportPdfOficial.ts` + `officialFormCoords.ts`, réplica exacta del PDF fuente del
+  gobierno): la línea "Firma:" ya impresa del evaluador (`evaluatorSignatureLine`, ya existía como
+  fallback de solo-texto) ahora incrusta la imagen real de la firma cuando existe, y solo cae al nombre
+  escrito si todavía no se firmó. El propietario/ocupante NO tiene campo en el formulario original (solo
+  evaluador y "funcionario responsable") — a pedido explícito del usuario se agregó de todas formas, en el
+  espacio en blanco real que sobra dentro del recuadro de la sección 16 (columna izquierda, debajo de la
+  línea de firma del evaluador), con una etiqueta propia ("Firma propietario/ocupante:") para dejar claro
+  que es un agregado de la app, no parte del formulario impreso — coordenadas nuevas en
+  `SIGNATURE_COORDS` (mapa aparte de `CHECKBOX_COORDS`/`BLANK_COORDS`, ya que necesita un rectángulo
+  completo para encajar una imagen, no solo una línea base para texto). Coordenadas verificadas
+  renderizando la plantilla real con un rectángulo de color superpuesto antes de dar por buena la
+  ubicación (mismo método que la extracción original de coordenadas, ver §10).
+- El APK original (híbrido) no necesitó ningún cambio propio — hereda todo esto vía la sincronización
+  normal de `public/` hacia su `www/`.

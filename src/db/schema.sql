@@ -123,7 +123,12 @@ CREATE TABLE IF NOT EXISTS inspections (
   evaluator_dependencia                   TEXT,
   responsible_official_name                 TEXT,
   responsible_official_cc                     TEXT,
-  responsible_official_entity                   TEXT
+  responsible_official_entity                   TEXT,
+
+  -- Firmas (captura digital con el dedo en pantalla, ver public/inspection.html)
+  -- -- se guardan como dataURL PNG (imagen del trazo), no como texto.
+  inspector_signature    TEXT,
+  occupant_signature     TEXT -- propietario/ocupante de la vivienda presente en la inspección
 );
 
 CREATE INDEX IF NOT EXISTS idx_inspections_status ON inspections(status);

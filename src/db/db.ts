@@ -24,6 +24,26 @@ db.exec("PRAGMA foreign_keys = ON;");
 const schemaSql = readFileSync(join(__dirname, "schema.sql"), "utf-8");
 db.exec(schemaSql);
 
+/**
+ * Migración aditiva mínima: `CREATE TABLE IF NOT EXISTS` (arriba) no agrega
+ * columnas nuevas a una tabla que ya existe -- hasta ahora no hacía falta
+ * nada más porque el nivel gratis de Render no tenía disco persistente (la
+ * base de datos se recreaba de cero en cada redeploy), pero con disco
+ * persistente ya sí puede haber una base de datos real más vieja que el
+ * esquema actual. `ensureColumn` es idempotente y segura de llamar en cada
+ * arranque -- no reemplaza un sistema de migraciones real (ver
+ * docs/DESPLIEGUE.md, sección PostgreSQL/Prisma para producción a mayor
+ * escala), pero alcanza para agregar columnas sueltas sin perder datos.
+ */
+function ensureColumn(table: string, column: string, definition: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn("inspections", "inspector_signature", "TEXT");
+ensureColumn("inspections", "occupant_signature", "TEXT");
+
 export function newId(): string {
   return randomUUID();
 }

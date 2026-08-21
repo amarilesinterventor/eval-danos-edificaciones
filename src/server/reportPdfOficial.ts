@@ -33,7 +33,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getInspection } from "../db/queries.js";
-import { CHECKBOX_COORDS, BLANK_COORDS, type BoxCoord, type LineCoord } from "./officialFormCoords.js";
+import { CHECKBOX_COORDS, BLANK_COORDS, SIGNATURE_COORDS, type BoxCoord, type LineCoord } from "./officialFormCoords.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOURCE_PDF_PATH = join(__dirname, "..", "..", "assets", "official-form", "2a-formulario-regional-homogenizado.pdf");
@@ -106,6 +106,37 @@ function fill(ctx: Ctx, code: string, text: string | null | undefined) {
   const coord = BLANK_COORDS[code];
   if (!coord) return;
   drawFieldText(ctx.pages[coord.page - 1], ctx.font, coord, text);
+}
+/**
+ * Incrusta la imagen de una firma capturada con el dedo (dataURL PNG,
+ * ver public/inspection.html) dentro de su recuadro de SIGNATURE_COORDS,
+ * centrada y ajustada a proporción. Nunca lanza: una firma ilegible no debe
+ * romper el resto del formulario.
+ */
+async function drawSignatureImage(ctx: Ctx, doc: PDFDocument, code: string, dataUrl: string | null | undefined): Promise<boolean> {
+  const coord = SIGNATURE_COORDS[code];
+  if (!coord || !dataUrl) return false;
+  const comma = dataUrl.indexOf(",");
+  const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  try {
+    const bytes = Buffer.from(base64, "base64");
+    const img = bytes[0] === 0x89 && bytes[1] === 0x50 ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+    const w = coord.x1 - coord.x0;
+    const h = coord.y1 - coord.y0;
+    const scale = Math.min(w / img.width, h / img.height);
+    const drawW = img.width * scale;
+    const drawH = img.height * scale;
+    const page = ctx.pages[coord.page - 1];
+    page.drawImage(img, {
+      x: coord.x0 + (w - drawW) / 2,
+      y: toY(coord.y1) + (h - drawH) / 2, // toY(y1): el borde inferior del recuadro en coordenadas nativas de pdf-lib (origen abajo-izquierda)
+      width: drawW,
+      height: drawH,
+    });
+    return true;
+  } catch {
+    return false; // firma ilegible/corrupta -- no rompe el resto del formulario
+  }
 }
 /** Marca todas las casillas de un catálogo multi-selección (prefijo + código de catálogo) y, si corresponde, escribe el texto de "Otro" en su campo. */
 function markCatalogMulti(ctx: Ctx, prefix: string, items: Array<{ code: string; otherText?: string }> | undefined, otherFieldCode?: string) {
@@ -258,15 +289,31 @@ export async function buildOfficialReportPdf(inspectionId: string): Promise<Uint
   fill(ctx, "evaluatorDocNumber", insp.evaluator_doc_number);
   fill(ctx, "evaluatorEntity", insp.evaluator_entity);
   fill(ctx, "evaluatorDependencia", insp.evaluator_dependencia);
-  // Líneas de firma: el formulario impreso espera una firma manuscrita: no
-  // hay captura de firma digital en esta herramienta, así que se escribe el
-  // nombre correspondiente como mejor esfuerzo (más útil que dejarlo en
-  // blanco), igual convención que usa el resto de la industria de formularios
+  // Línea de firma del evaluador: se incrusta la firma real capturada con el
+  // dedo (ver public/inspection.html) si existe; si todavía no se firmó, se
+  // escribe el nombre como mejor esfuerzo (más útil que dejarlo en blanco),
+  // igual convención que usa el resto de la industria de formularios
   // diligenciados digitalmente sin firma electrónica real.
-  fill(ctx, "evaluatorSignatureLine", insp.evaluator_name);
+  const evaluatorSigned = await drawSignatureImage(ctx, pdfDoc, "inspectorSignatureImage", insp.inspector_signature);
+  if (!evaluatorSigned) fill(ctx, "evaluatorSignatureLine", insp.evaluator_name);
   fill(ctx, "responsibleOfficialSignatureLine", insp.responsible_official_name);
   fill(ctx, "responsibleOfficialCc", insp.responsible_official_cc);
   fill(ctx, "responsibleOfficialEntity", insp.responsible_official_entity);
+
+  // Firma del propietario/ocupante: el formulario original NO tiene un
+  // campo para esto (solo evaluador y "funcionario responsable") -- a
+  // pedido explícito se agrega igual, en el espacio en blanco real que
+  // queda dentro del recuadro de la sección 16 (ver SIGNATURE_COORDS). Se
+  // dibuja una etiqueta propia (no impresa en el original) para que quede
+  // claro que es un agregado de la app, no parte del formulario fuente.
+  if (insp.occupant_signature) {
+    const coord = SIGNATURE_COORDS.occupantSignatureImage;
+    const page = ctx.pages[coord.page - 1];
+    // Verticalmente centrada frente al recuadro de la firma (a su izquierda).
+    page.drawText("Firma propietario/", { x: 42, y: toY((coord.y0 + coord.y1) / 2) + 2, size: 6.5, font, color: rgb(0.4, 0.44, 0.52) });
+    page.drawText("ocupante:", { x: 42, y: toY((coord.y0 + coord.y1) / 2) - 6, size: 6.5, font, color: rgb(0.4, 0.44, 0.52) });
+    await drawSignatureImage(ctx, pdfDoc, "occupantSignatureImage", insp.occupant_signature);
+  }
 
   return pdfDoc.save();
 }

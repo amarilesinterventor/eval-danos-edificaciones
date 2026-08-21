@@ -206,6 +206,10 @@ model Inspection {
   responsibleOfficialCc                     String?           @map("responsible_official_cc")
   responsibleOfficialEntity                    String?           @map("responsible_official_entity")
 
+  // Firmas (captura digital con el dedo en pantalla) -- dataURL PNG del trazo.
+  inspectorSignature      String?           @map("inspector_signature")
+  occupantSignature       String?           @map("occupant_signature")
+
   threatTypes             InspectionThreatType[]
   buildingUses              InspectionBuildingUse[]
   structuralSystems           InspectionStructuralSystem[]

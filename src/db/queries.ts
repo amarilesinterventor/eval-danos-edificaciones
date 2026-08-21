@@ -86,6 +86,9 @@ const INSPECTION_COLUMN_MAP: Record<string, string> = {
   responsibleOfficialName: "responsible_official_name",
   responsibleOfficialCc: "responsible_official_cc",
   responsibleOfficialEntity: "responsible_official_entity",
+
+  inspectorSignature: "inspector_signature",
+  occupantSignature: "occupant_signature",
 };
 
 /** Campos que se guardan como INTEGER 0/1 nullable (tri-estado NULL = no diligenciado). */

@@ -255,6 +255,46 @@ function photoThumbRow(doc: Doc, photos: any[] | undefined, thumbSize = 170) {
   doc.x = PAGE_MARGIN;
 }
 
+/** Decodifica un dataURL "data:image/png;base64,..." a Buffer -- una firma nunca es un archivo en disco, a diferencia de las fotos. */
+function decodeSignatureDataUrl(dataUrl: string): Buffer | null {
+  const comma = dataUrl.indexOf(",");
+  const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  try {
+    return Buffer.from(base64, "base64");
+  } catch {
+    return null;
+  }
+}
+
+/** Dos recuadros lado a lado (evaluador / propietario-ocupante) con la firma incrustada, o "No firmado" si falta. */
+function drawSignaturesRow(doc: Doc, inspectorSignature: string | null | undefined, occupantSignature: string | null | undefined) {
+  const boxH = 60;
+  const gap = 20;
+  const colWidth = (CONTENT_WIDTH - gap) / 2;
+  ensureSpace(doc, boxH + 20);
+  const y = doc.y;
+
+  function box(x: number, label: string, dataUrl: string | null | undefined) {
+    doc.roundedRect(x, y, colWidth, boxH, 4).lineWidth(0.75).strokeColor("#cbd5e1").stroke();
+    const buffer = dataUrl ? decodeSignatureDataUrl(dataUrl) : null;
+    if (buffer) {
+      try {
+        doc.image(buffer, x + 4, y + 4, { fit: [colWidth - 8, boxH - 8] });
+      } catch {
+        // Firma ilegible/corrupta puntual -- no debe romper el resto del informe.
+        doc.fontSize(8).fillColor("#cbd5e1").text("Firma no disponible", x, y + boxH / 2 - 4, { width: colWidth, align: "center" });
+      }
+    } else {
+      doc.fontSize(8).fillColor("#cbd5e1").text("No firmado", x, y + boxH / 2 - 4, { width: colWidth, align: "center" });
+    }
+    doc.fontSize(8).fillColor("#64748b").text(label, x, y + boxH + 5, { width: colWidth, align: "center" });
+  }
+  box(PAGE_MARGIN, "Firma del evaluador", inspectorSignature);
+  box(PAGE_MARGIN + colWidth + gap, "Firma del propietario/ocupante", occupantSignature);
+  doc.y = y + boxH + 22;
+  doc.x = PAGE_MARGIN;
+}
+
 /**
  * Portada: banda de clasificación + foto de la edificación (si existe una
  * fotografía panorámica) como imagen de portada, con el nombre/dirección
@@ -555,6 +595,18 @@ export function buildInspectionReportPdf(inspectionId: string): Doc {
     ["C.C. funcionario responsable", insp.responsible_official_cc ?? "—"],
     ["Entidad funcionario responsable", insp.responsible_official_entity ?? "—"],
   ]);
+
+  // =========================================================================
+  // FIRMAS -- captura digital con el dedo en pantalla (ver
+  // public/inspection.html, initSignaturePad), guardada como dataURL PNG en
+  // inspector_signature/occupant_signature. Se decodifica e incrusta como
+  // imagen -- a diferencia de las fotos (archivos en disco, ver
+  // photoThumbRow arriba), una firma nunca es un archivo server-side, así
+  // que `doc.image()` recibe el Buffer decodificado directamente en vez de
+  // una ruta.
+  // =========================================================================
+  sectionBanner(doc, "Firmas");
+  drawSignaturesRow(doc, insp.inspector_signature, insp.occupant_signature);
 
   // =========================================================================
   // CRÉDITOS DE LA HERRAMIENTA (no forma parte del formulario impreso)
