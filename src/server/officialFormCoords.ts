@@ -267,18 +267,27 @@ export const BLANK_COORDS: Record<string, LineCoord> = {
  * escrito por la app), acá se dibuja el trazo real.
  *
  * `inspectorSignatureImage` reutiliza el espacio de la línea "Firma:" ya
- * impresa en el formulario (mismo rango x que `evaluatorSignatureLine`,
- * justo encima de esa línea). `occupantSignatureImage` NO tiene línea
- * impresa correspondiente en el formulario original -- el propietario/
- * ocupante de la vivienda no forma parte del formulario fuente, solo el
- * evaluador y un "funcionario responsable" -- así que ocupa un espacio en
- * blanco real dentro del recuadro de la sección 16 (columna izquierda,
- * debajo de la línea de firma del evaluador; se aparta a propósito de ser
- * una réplica exacta a pedido explícito, con una etiqueta agregada por la
- * app -- ver drawOccupantSignatureLabel en reportPdfOficial.ts -- para que
- * quede claro que no es texto impreso del original).
+ * impresa en el formulario (mismo rango x que `evaluatorSignatureLine`).
+ * `occupantSignatureImage` NO tiene línea impresa correspondiente en el
+ * formulario original -- el propietario/ocupante de la vivienda no forma
+ * parte del formulario fuente, solo el evaluador y un "funcionario
+ * responsable" -- así que ocupa un espacio en blanco real dentro del
+ * recuadro de la sección 16 (columna izquierda, debajo de la línea de firma
+ * del evaluador; se aparta a propósito de ser una réplica exacta a pedido
+ * explícito, con una etiqueta agregada por la app para que quede claro que
+ * no es texto impreso del original).
+ *
+ * Misma ALTURA en las dos (27pt) a pedido explícito del usuario -- de lo
+ * contrario, `drawSignatureImage`/`fillSignature` escalan la firma para que
+ * quepa completa dentro de su recuadro preservando proporción, y con la
+ * altura original de `inspectorSignatureImage` (14pt, para no invadir la
+ * fila de arriba) la firma del evaluador salía visiblemente más chica que
+ * la del propietario/ocupante. Para lograr la misma altura, el recuadro del
+ * evaluador ahora sí invade la fila de "Número de documento" que está justo
+ * encima -- aceptado a propósito ("sin importar que se remonte en el texto
+ * del documento").
  */
 export const SIGNATURE_COORDS: Record<string, BoxCoord> = {
-  "inspectorSignatureImage": { page: 2, x0: 229, y0: 686, x1: 378, y1: 700 },
+  "inspectorSignatureImage": { page: 2, x0: 229, y0: 673, x1: 378, y1: 700 },
   "occupantSignatureImage": { page: 2, x0: 150, y0: 709, x1: 376, y1: 736 },
 };
